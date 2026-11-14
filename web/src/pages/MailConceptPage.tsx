@@ -77,7 +77,7 @@ function PanelPlayer() {
  * layout, but every button uses the real app: the person's real inbox, voices and summaries.
  */
 export function MailConceptPage() {
-  const { inbox, categories, me, loadInbox } = useApp();
+  const { inbox, inboxError, inboxLoading, categories, me, loadInbox } = useApp();
   const { play, state } = usePlayer();
   const [openId, setOpenId] = useState<string | null>(null);
   const [label, setLabel] = useState<string | null>(null);
@@ -98,12 +98,12 @@ export function MailConceptPage() {
   const currentLabel = label ? byId.get(label) : undefined;
 
   useEffect(() => {
+    setMessage(null);
+    setError(null);
     if (!openId) {
-      setMessage(null);
       return;
     }
     let alive = true;
-    setError(null);
     api<{ message: FullMessage }>(`/api/messages/${encodeURIComponent(openId)}`).then(
       (r) => alive && setMessage(r.message),
       (err) => alive && setError(errorMessage(err)),
@@ -174,12 +174,13 @@ export function MailConceptPage() {
             {!open && (
               <>
                 <div className="mf-toolbar">
-                  <button className="icon-btn mf-flat" onClick={() => void loadInbox(true)} aria-label="Refresh">
+                  <button className="icon-btn mf-flat" disabled={inboxLoading} onClick={() => void loadInbox(true)} aria-label="Refresh">
                     <Icon name="refresh" />
                   </button>
                   <span className="small muted">{currentLabel ? currentLabel.name : "Inbox"}</span>
                 </div>
-                {!inbox && <div className="mf-empty">Loading…</div>}
+                {inboxError && <div className="notice notice-error" role="alert">{inboxError}</div>}
+                {inboxLoading && <div className="mf-empty" role="status">Loading…</div>}
                 {inbox && items.length === 0 && <div className="mf-empty">No emails here.</div>}
                 <ul className="mf-list">
                   {items.map((m) => {
@@ -222,7 +223,7 @@ export function MailConceptPage() {
                   </div>
                 </div>
                 {error && <div className="notice notice-error">{error}</div>}
-                <div className="message-body">{message ? message.bodyText || message.snippet : "Loading…"}</div>
+                {!error && <div className="message-body">{message?.id === openId ? message.bodyText || message.snippet : "Loading…"}</div>}
               </article>
             )}
           </section>

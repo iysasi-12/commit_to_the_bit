@@ -51,6 +51,7 @@ export function VoicePicker({ label = "Voice", onManage }: { label?: string; onM
   const { data, error, saving, select } = useVoices();
   const mine = (data?.mine ?? []).filter((v) => v.status === "approved" && !(v.madeInDemo && data?.mode === "live"));
   const selected = data?.selected?.ref ?? "";
+  const selectedIsListed = mine.some((v) => v.ref === selected) || (data?.stock ?? []).some((v) => `stock:${v.providerVoiceId}` === selected);
 
   return (
     <div className="voice-picker">
@@ -60,6 +61,11 @@ export function VoicePicker({ label = "Voice", onManage }: { label?: string; onM
         </span>
         <select className="input" value={selected} disabled={!data || saving || data.mode === "unavailable"} onChange={(e) => void select(e.target.value)} aria-label="Choose the voice that reads your summaries">
           {!data && <option value="">Loading voices…</option>}
+          {data && !selectedIsListed && (
+            <option value={selected} disabled>
+              {data.selected?.name ?? (data.mode === "unavailable" ? "Voice service unavailable" : "Choose a voice")}
+            </option>
+          )}
           {mine.length > 0 && (
             <optgroup label="Your voices">
               {mine.map((v) => (

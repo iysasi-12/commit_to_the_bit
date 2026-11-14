@@ -251,7 +251,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         if (id !== run.current) return;
         if (err instanceof ApiError && err.code === "CONSENT_REQUIRED") {
           const ok = await requestConsent();
-          if (ok && id === run.current) return play(req);
+          if (id !== run.current) return;
+          if (ok) return play(req);
           setState(IDLE);
           return;
         }
