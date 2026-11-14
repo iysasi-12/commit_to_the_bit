@@ -1,0 +1,10 @@
+{
+  "name": "Inbox Voice",
+  "short_name": "Inbox Voice",
+  "description": "Hear an AI-voiced summary of your Gmail.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#fbf6f0",
+  "theme_color": "#e2673a",
+  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}
