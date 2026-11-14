@@ -186,8 +186,9 @@ export function VoicePage() {
             <div className="info">
               <div className="name">{own.name}</div>
               <div className="desc">
-                {own.status === "preview" ? "Waiting for your approval" : "Approved"}
-                {own.recordingKept ? " · recording kept on server" : " · recording discarded"}
+                {own.madeInDemo && data?.mode === "live"
+                  ? "Made in demo mode, so it isn't a real voice. Delete it to create one."
+                  : `${own.status === "preview" ? "Waiting for your approval" : "Approved"}${own.recordingKept ? " · recording kept on server" : " · recording discarded"}`}
               </div>
             </div>
             {own.status === "preview" ? (

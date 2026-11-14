@@ -4,19 +4,37 @@ import { Icon } from "../icons.tsx";
 import { useApp } from "../state.tsx";
 import type { Me } from "../types.ts";
 
+export function aiCompany(provider: string | null): { company: string; product: string } {
+  if (provider === "gemini") return { company: "Google", product: "Google's Gemini AI" };
+  if (provider === "anthropic") return { company: "Anthropic", product: "Anthropic's Claude AI" };
+  return { company: "the AI service", product: "the AI service" };
+}
+
 export function ConsentDetails() {
   const { config } = useApp();
+  const ai = aiCompany(config.aiProvider);
   return (
     <ul className="stack small" style={{ paddingLeft: 18, margin: "8px 0" }}>
       <li>
         <strong>Gmail is read-only.</strong> The app can read your inbox but can't send, delete, or change any email.
       </li>
       <li>
-        <strong>Summaries:</strong> when you ask for one, the sender, subject, date, and text of those emails are sent to Anthropic's Claude AI to write it.
+        <strong>Summaries:</strong> when you ask for one, the sender, subject, date, and text of those emails are sent to {ai.product} to write it.
       </li>
       <li>
-        <strong>Filter:</strong> to sort emails into categories, only the sender, subject, and Gmail's short preview are sent to Claude.
+        <strong>Filter:</strong> to sort emails into categories, only the sender, subject, and Gmail's short preview are sent to {ai.product}.
       </li>
+      {config.aiProvider === "gemini" && (
+        <li>
+          <strong>Gemini free tier:</strong> if this app's Gemini key is on Google's free tier, Google may use what's sent to improve its products, and human reviewers
+          may read it. That doesn't apply when the key's Google Cloud project has billing turned on.
+        </li>
+      )}
+      {config.aiProvider === "demo" && (
+        <li>
+          <strong>Demo mode:</strong> no AI service is connected yet, so nothing is sent anywhere for summaries. This screen describes what will happen once one is.
+        </li>
+      )}
       <li>
         <strong>Voice:</strong> the summary text is sent to ElevenLabs to turn it into speech.
       </li>
@@ -64,7 +82,7 @@ export function ConsentSheet() {
         <ConsentDetails />
         <label className="check">
           <input type="checkbox" checked={agree} onChange={(e) => setAgree(e.target.checked)} />
-          <span>I understand and agree to my email content being processed by Anthropic and ElevenLabs as described above.</span>
+          <span>I understand and agree to my email content being processed by {aiCompany(config.aiProvider).company} and ElevenLabs as described above.</span>
         </label>
         {error && <div className="notice notice-error">{error}</div>}
         <div className="row" style={{ marginTop: 12 }}>

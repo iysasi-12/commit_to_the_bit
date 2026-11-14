@@ -54,11 +54,11 @@ export class SummaryService {
   private aiIdentity(): string {
     const ai = this.deps.providers.ai;
     if (!ai) return "none";
-    return ai.mode === "live" ? `live:${this.deps.config.anthropic?.model}` : "demo";
+    return `${ai.mode}:${ai.name}:${ai.model}`;
   }
 
   async summarizeOne(user: UserRow, messageId: string): Promise<{ summary: SummaryRow; cached: boolean }> {
-    requireConsent(user);
+    requireConsent(user, this.deps);
     const settings = this.deps.store.getSettings(user);
     const key = sha256(JSON.stringify({ v: 1, scope: "one", messageId, length: settings.summaryLength, ai: this.aiIdentity(), name: user.name }));
     return this.cachedOrRun(user, key, async () => {
@@ -85,7 +85,7 @@ export class SummaryService {
   }
 
   async summarizeMany(user: UserRow, opts: { categoryId?: string | null }): Promise<{ summary: SummaryRow; cached: boolean }> {
-    requireConsent(user);
+    requireConsent(user, this.deps);
     const { store, config } = this.deps;
     const settings = store.getSettings(user);
     const count = Math.min(settings.summaryCount, config.limits.summaryMaxEmails);
@@ -168,7 +168,7 @@ export class SummaryService {
         text: capSpokenText(result.text, config.limits.ttsMaxChars),
         message_count: result.messageCount,
         truncated_count: result.truncatedCount,
-        ai_mode: this.deps.providers.ai?.mode ?? "none",
+        ai_mode: this.deps.providers.ai ? (this.deps.providers.ai.mode === "demo" ? "demo" : this.deps.providers.ai.name) : "none",
         created_at: this.deps.now(),
       });
     })().finally(() => this.inflight.delete(flightKey));

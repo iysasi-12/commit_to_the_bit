@@ -1,7 +1,7 @@
 import express, { type NextFunction, type Request, type Response } from "express";
 import multer from "multer";
 import { z } from "zod";
-import { CONSENT_VERSION, type AppDeps } from "./context.ts";
+import { currentConsentVersion, type AppDeps } from "./context.ts";
 import { randomToken, sha256 } from "./crypto.ts";
 import { CATEGORY_COLORS, type UserRow } from "./db.ts";
 import { AppError, Errors } from "./errors.ts";
@@ -90,6 +90,7 @@ export function createApp(deps: AppDeps): { app: express.Express; services: AppS
   const summaries = new SummaryService(deps, inbox);
   const account = new AccountService(deps, voices, inbox);
   const users = new WeakMap<Request, UserRow>();
+  const consentVersion = currentConsentVersion(providers);
 
   const app = express();
   app.disable("x-powered-by");
@@ -156,14 +157,15 @@ export function createApp(deps: AppDeps): { app: express.Express; services: AppS
   app.get("/api/config", (_req, res) => {
     res.json({
       demoMode: config.demoMode,
-      consentVersion: CONSENT_VERSION,
+      consentVersion,
+      aiProvider: providers.ai?.name ?? null,
       signIn: { google: Boolean(providers.googleAuth), demo: config.demoMode },
       services: {
         gmail: providers.liveMail ? "live" : "unavailable",
         ai: providers.ai?.mode ?? "unavailable",
         voice: providers.voice?.mode ?? "unavailable",
       },
-      aiModel: providers.ai?.mode === "live" ? config.anthropic?.model : null,
+      aiModel: providers.ai?.mode === "live" ? providers.ai.model : null,
       voiceModel: providers.voice?.mode === "live" ? config.elevenlabs?.modelId : null,
       limits: {
         summaryMaxEmails: config.limits.summaryMaxEmails,
@@ -249,7 +251,7 @@ export function createApp(deps: AppDeps): { app: express.Express; services: AppS
       isDemo: Boolean(user.is_demo),
       mailMode: user.is_demo ? "demo" : "live",
       consent: {
-        accepted: Boolean(user.ai_consent_at) && user.ai_consent_version === CONSENT_VERSION,
+        accepted: Boolean(user.ai_consent_at) && user.ai_consent_version === consentVersion,
         acceptedAt: user.ai_consent_at,
         version: user.ai_consent_version,
       },
@@ -264,8 +266,8 @@ export function createApp(deps: AppDeps): { app: express.Express; services: AppS
 
   app.post("/api/consent", (req, res) => {
     const user = currentUser(req);
-    parse(z.object({ accept: z.literal(true), version: z.literal(CONSENT_VERSION) }), req.body);
-    store.setConsent(user.id, deps.now(), CONSENT_VERSION);
+    parse(z.object({ accept: z.literal(true), version: z.literal(consentVersion) }), req.body);
+    store.setConsent(user.id, deps.now(), consentVersion);
     res.json({ user: meToApi(store.getUser(user.id)!) });
   });
 
@@ -390,7 +392,7 @@ export function createApp(deps: AppDeps): { app: express.Express; services: AppS
 
   app.post("/api/summaries/:id/audio", async (req, res) => {
     const user = currentUser(req);
-    requireConsent(user);
+    requireConsent(user, deps);
     const summary = store.getSummary(user.id, param(req, "id"));
     if (!summary) throw Errors.notFound("That summary");
     const voice = await voices.resolve(user);

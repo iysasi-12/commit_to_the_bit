@@ -1,4 +1,4 @@
-import { CONSENT_VERSION, type AppDeps } from "../context.ts";
+import { currentConsentVersion, type AppDeps } from "../context.ts";
 import type { CategoryRow, UserRow } from "../db.ts";
 import { AppError, Errors } from "../errors.ts";
 import type { AiProvider, InboxMessage, MailProvider } from "../providers/types.ts";
@@ -11,8 +11,8 @@ export interface InboxItem extends InboxMessage {
 const LIST_CACHE_MS = 60_000;
 const CLASSIFY_BATCH = 25;
 
-export function requireConsent(user: UserRow): void {
-  if (!user.ai_consent_at || user.ai_consent_version !== CONSENT_VERSION) throw Errors.consentRequired();
+export function requireConsent(user: UserRow, deps: Pick<AppDeps, "providers">): void {
+  if (!user.ai_consent_at || user.ai_consent_version !== currentConsentVersion(deps.providers)) throw Errors.consentRequired();
 }
 
 export function requireAi(deps: AppDeps): AiProvider {
@@ -68,7 +68,7 @@ export class InboxService {
    * Only sender, subject and the short Gmail preview are sent to the AI for this.
    */
   async classify(user: UserRow): Promise<{ assigned: number }> {
-    requireConsent(user);
+    requireConsent(user, this.deps);
     const running = this.classifying.get(user.id);
     if (running) return { assigned: await running };
     const job = this.runClassify(user).finally(() => this.classifying.delete(user.id));

@@ -7,6 +7,14 @@ import type { FileStore } from "./storage.ts";
 
 export const CONSENT_VERSION = "2026-11-14";
 
+/**
+ * Consent names the AI company that reads the email, so switching from Claude to
+ * Gemini (or back) asks people to agree again.
+ */
+export function currentConsentVersion(providers: Pick<Providers, "ai">): string {
+  return `${CONSENT_VERSION}+${providers.ai?.name ?? "none"}`;
+}
+
 export interface Providers {
   /** null when Google OAuth isn't configured. */
   googleAuth: GoogleAuthProvider | null;

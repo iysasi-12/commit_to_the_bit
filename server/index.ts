@@ -9,6 +9,7 @@ import { Store } from "./db.ts";
 import { AnthropicAiProvider } from "./providers/anthropic.ts";
 import { DemoAiProvider, DemoMailProvider, DemoVoiceProvider } from "./providers/demo.ts";
 import { ElevenLabsVoiceProvider } from "./providers/elevenlabs.ts";
+import { GeminiAiProvider } from "./providers/gemini.ts";
 import { GmailMailProvider, GoogleOAuth, GoogleTokenService } from "./providers/google.ts";
 import { RateLimiter } from "./rateLimit.ts";
 import { FileStore } from "./storage.ts";
@@ -26,7 +27,14 @@ const providers: Providers = {
   googleAuth,
   liveMail: tokens ? new GmailMailProvider(tokens) : null,
   demoMail: new DemoMailProvider(),
-  ai: config.anthropic ? new AnthropicAiProvider(config.anthropic) : config.demoMode ? new DemoAiProvider() : null,
+  ai:
+    config.aiProvider === "anthropic" && config.anthropic
+      ? new AnthropicAiProvider(config.anthropic)
+      : config.aiProvider === "gemini" && config.gemini
+        ? new GeminiAiProvider(config.gemini)
+        : config.demoMode
+          ? new DemoAiProvider()
+          : null,
   voice: config.elevenlabs ? new ElevenLabsVoiceProvider(config.elevenlabs) : config.demoMode ? new DemoVoiceProvider() : null,
 };
 
@@ -65,6 +73,6 @@ app.listen(config.port, () => {
   const mode = (s: string | undefined) => s ?? "not configured";
   console.log(`\nInbox Voice running at ${config.publicUrl}${dev ? " (dev)" : ""}`);
   console.log(`  Gmail sign-in : ${googleAuth ? "Google OAuth configured" : "not configured"}${config.demoMode ? " · demo sign-in on" : ""}`);
-  console.log(`  Summaries/AI  : ${mode(providers.ai?.mode)}${providers.ai?.mode === "live" ? ` (${config.anthropic?.model})` : ""}`);
+  console.log(`  Summaries/AI  : ${mode(providers.ai?.mode)}${providers.ai?.mode === "live" ? ` (${providers.ai.name}: ${providers.ai.model})` : ""}`);
   console.log(`  Voice         : ${mode(providers.voice?.mode)}${providers.voice?.mode === "live" ? ` (${config.elevenlabs?.modelId})` : ""}\n`);
 });

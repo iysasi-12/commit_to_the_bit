@@ -88,6 +88,8 @@ export class FakeMail implements MailProvider {
 
 export class FakeAi implements AiProvider {
   readonly mode = "live" as const;
+  readonly name = "anthropic" as const;
+  readonly model = "claude-test";
   classifyCalls = 0;
   summarizeCalls = 0;
   lastSummaryRequest: SummaryRequest | null = null;
@@ -353,8 +355,10 @@ export class Client {
     return this.get(`/auth/google/callback?code=${encodeURIComponent(code)}&state=${encodeURIComponent(state)}`);
   }
 
-  async consent(version = "2026-11-14") {
-    return this.post("/api/consent", { accept: true, version });
+  /** Agrees to AI processing using the version the server currently asks for. */
+  async consent(version?: string) {
+    const v = version ?? (await this.get("/api/config")).body.consentVersion;
+    return this.post("/api/consent", { accept: true, version: v });
   }
 }
 

@@ -3,7 +3,7 @@
 Hear your Gmail. Sign in with Google, tap **AI Summary**, and an AI voice reads a short briefing of your latest emails: what needs a reply, what's due, and what can wait. The **Filter** tab uses AI to sort mail into School, Work, Transactions, Personal, Promotions (and any categories you add) so you can hear a summary of just one category. The **Voice** tab lets you pick an ElevenLabs voice, add one from the ElevenLabs Voice Library, or record your own voice and have summaries read in it.
 
 - **Gmail**: read-only (`gmail.readonly`). The app can't send, delete or change mail.
-- **Summaries and sorting**: Anthropic Claude through the official SDK.
+- **Summaries and sorting**: Anthropic Claude **or** Google Gemini, each through its official SDK. Set whichever key you have.
 - **Speech and voice cloning**: ElevenLabs Text to Speech and Instant Voice Cloning.
 - **Stack**: TypeScript everywhere. Node 22.18+ runs the `.ts` server directly. Express 5 and SQLite (`node:sqlite`) on the server; React 19 and Vite on the front end; mobile-first and installable to the home screen.
 
@@ -17,9 +17,11 @@ Hear your Gmail. Sign in with Google, tap **AI Summary**, and an AI voice reads 
 | Server API, authorization, caching, dedupe, rate limits, deletion | 92 automated tests (`npm test`) against the real server, database and files, with **mock** providers | No |
 | Gmail / Google OAuth requests | Unit tests with mocked HTTP that check URLs, params and error mapping against Google's docs | **No**. Needs your Google Cloud project |
 | Anthropic requests | Unit tests through the real SDK with a mocked `fetch` | **No**. Needs `ANTHROPIC_API_KEY` |
-| ElevenLabs requests | Unit tests with mocked HTTP that check endpoints, headers, multipart fields and error mapping | **No**. Needs `ELEVENLABS_API_KEY` |
+| Gemini requests | Unit tests through the real `@google/genai` SDK with a mocked `fetch` | **No**. Needs `GEMINI_API_KEY` |
+| ElevenLabs speech | Mocked unit tests, **plus one live run on 2026-11-14**: a free-plan key returned 21 ready-made voices and a real MP3 summary | **Yes** (ready-made voices only) |
+| ElevenLabs cloning | Mocked unit tests. The live account check showed the free plan can't clone | **No**. Needs a paid plan |
 
-**No live call to Gmail, Anthropic, or ElevenLabs has been made.** Passing tests show the app follows the documented request formats. They don't prove the live services accept them. See [Untested or blocked](#untested-or-blocked) for the full list.
+**Live so far:** ElevenLabs speech with a ready-made voice. **Not yet live:** Gmail, Anthropic, Gemini and ElevenLabs cloning. Passing mocked tests show the app follows the documented request formats; they don't prove the live services accept them. See [Untested or blocked](#untested-or-blocked) for the full list.
 
 ---
 
@@ -88,6 +90,16 @@ What to expect, from Google's docs:
 - Create a key at the [Anthropic Console](https://console.anthropic.com/), add billing, and set `ANTHROPIC_API_KEY`.
 - Default model: `claude-opus-5-5`. Override it with `ANTHROPIC_MODEL`. Sorting uses `effort: low`; summaries use `effort: medium`.
 - **Refusal fallback is on** (`ANTHROPIC_REFUSAL_FALLBACK=default`). If the model declines a request, the API retries it once on a fallback model inside the same call. Set it to `off` to disable this.
+
+### 2b. Or Google Gemini (instead of Anthropic)
+
+- Go to [Google AI Studio](https://aistudio.google.com/apikey), sign in, and click **Create API key**. New users get a default project and key.
+- Put it in `GEMINI_API_KEY`. If you also have an Anthropic key, set `AI_PROVIDER=gemini` to choose Gemini.
+- Default model: `gemini-3.8-flash` (stable, has a free tier). Override it with `GEMINI_MODEL`.
+- **Free tier and privacy**: Google's terms say free-tier prompts and responses may be used to improve Google's products and read by human reviewers. That stops when the key's Google Cloud project has an active billing account (paid tier). Hackathon credits, such as the MLH/Google offers, are applied through a billing account. The app's privacy screen says this whenever Gemini is in use.
+- **Free-tier limits**: limits are per minute and per day. When they're hit, the app shows "Gemini's usage limit was reached… try again".
+- **Region rule**: Google's terms allow only the paid tier for apps offered to people in the EEA, Switzerland or the UK.
+- **Switching AI provider** (Claude ↔ Gemini) asks everyone to agree to the privacy screen again, because it names the company that reads the email.
 
 ### 3. ElevenLabs (voice)
 
@@ -227,3 +239,11 @@ Browser (React)  ──fetch + session cookie──>  Express server  ──>  G
   - [Gmail API scopes](https://developers.google.com/workspace/gmail/api/auth/scopes)
   - [Gmail quota](https://developers.google.com/workspace/gmail/api/reference/quota)
 - Anthropic: the official TypeScript SDK (`@anthropic-ai/sdk` 1.8) and its Messages API.
+- Google Gemini (ai.google.dev redirects to aistudio.google.com/docs):
+  - [API keys](https://aistudio.google.com/docs/api-key)
+  - [Models](https://aistudio.google.com/docs/models)
+  - [Structured output](https://aistudio.google.com/docs/structured-output)
+  - [Pricing and data use](https://aistudio.google.com/docs/pricing)
+  - [Terms](https://aistudio.google.com/docs/terms)
+  - [Errors](https://aistudio.google.com/docs/api-errors)
+  - SDK: `@google/genai` 3.3, using `models.generateContent`. The newer Interactions API in the docs isn't used yet.

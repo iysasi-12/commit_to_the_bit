@@ -3,6 +3,7 @@ export type ServiceMode = "live" | "demo" | "unavailable";
 export interface AppConfigInfo {
   demoMode: boolean;
   consentVersion: string;
+  aiProvider: "anthropic" | "gemini" | "demo" | null;
   signIn: { google: boolean; demo: boolean };
   services: { gmail: ServiceMode; ai: ServiceMode; voice: ServiceMode };
   aiModel: string | null;
@@ -118,6 +119,7 @@ export interface MyVoice {
   createdAt: number;
   recordingKept: boolean;
   requiresVerification: boolean;
+  madeInDemo: boolean;
 }
 
 export interface ResolvedVoice {

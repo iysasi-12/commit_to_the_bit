@@ -36,6 +36,7 @@ export function voiceRowToApi(v: VoiceRow) {
     createdAt: v.created_at,
     recordingKept: Boolean(v.recording_path),
     requiresVerification: Boolean(meta.requiresVerification),
+    madeInDemo: v.provider_voice_id.startsWith("demo-"),
   };
 }
 
@@ -45,6 +46,11 @@ export class VoiceService {
 
   constructor(deps: AppDeps) {
     this.deps = deps;
+  }
+
+  /** A voice made by the demo stand-in can't be used once real ElevenLabs keys are added. */
+  isStaleDemoVoice(row: VoiceRow): boolean {
+    return this.deps.providers.voice?.mode === "live" && row.provider_voice_id.startsWith("demo-");
   }
 
   async stockVoices(): Promise<StockVoice[]> {
@@ -79,7 +85,7 @@ export class VoiceService {
     }
     if (ref.startsWith("voice:")) {
       const row = this.deps.store.getVoice(user.id, ref.slice("voice:".length));
-      if (row && row.status === "approved") return { ref, providerVoiceId: row.provider_voice_id, name: row.name, kind: row.kind };
+      if (row && row.status === "approved" && !this.isStaleDemoVoice(row)) return { ref, providerVoiceId: row.provider_voice_id, name: row.name, kind: row.kind };
       this.deps.store.setSelectedVoice(user.id, null);
       return this.defaultVoice();
     }
@@ -100,6 +106,9 @@ export class VoiceService {
       const row = this.deps.store.getVoice(user.id, ref.slice("voice:".length));
       // Another person's voice looks exactly like a missing one: no hint that it exists.
       if (!row) throw Errors.notFound("That voice");
+      if (this.isStaleDemoVoice(row)) {
+        throw new AppError("DEMO_VOICE", 409, "This voice was made in demo mode, so it doesn't exist at ElevenLabs. Delete it and pick or create a real voice.");
+      }
       if (row.status !== "approved") throw new AppError("VOICE_NOT_APPROVED", 409, "Listen to the preview and approve this voice before using it.");
       this.deps.store.setSelectedVoice(user.id, ref);
       return { ref, providerVoiceId: row.provider_voice_id, name: row.name, kind: row.kind };

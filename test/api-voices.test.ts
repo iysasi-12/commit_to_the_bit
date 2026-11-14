@@ -225,6 +225,31 @@ describe("voices: ready-made, library and the person's own clone", () => {
     assert.ok(h.voice.deleteCalls.includes(providerId));
   });
 
+  it("falls back to a real voice when a demo-made voice is left over after adding keys", async () => {
+    const { client, userId } = await signedInUser(h, "upgrader");
+    const row = h.deps.store.insertVoice({
+      user_id: userId,
+      kind: "own",
+      provider_voice_id: "demo-clone-abc",
+      name: "Old demo voice",
+      status: "approved",
+      consent_at: Date.now(),
+      recording_path: null,
+      created_at: Date.now(),
+      meta_json: "{}",
+    });
+    h.deps.store.setSelectedVoice(userId, `voice:${row.id}`);
+    const list = await client.get("/api/voices");
+    assert.equal(list.body.selected.ref, "stock:stock-a");
+    assert.equal(list.body.mine[0].madeInDemo, true);
+    const pick = await client.put("/api/voices/selected", { ref: `voice:${row.id}` });
+    assert.equal(pick.status, 409);
+    assert.equal(pick.body.error.code, "DEMO_VOICE");
+    const s = await client.post("/api/summaries", { scope: "many" });
+    await client.post(`/api/summaries/${s.body.summary.id}/audio`);
+    assert.equal(h.voice.synthCalls.at(-1)!.providerVoiceId, "stock-a", "never sends a demo voice id to ElevenLabs");
+  });
+
   it("reports clone capability", async () => {
     const { client } = await signedInUser(h, "capcheck");
     assert.deepEqual((await client.get("/api/voices/capabilities")).body, { mode: "live", canClone: true, message: null });

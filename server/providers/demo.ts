@@ -208,6 +208,8 @@ function keywordsFor(cat: CategoryForAi): string[] {
 
 export class DemoAiProvider implements AiProvider {
   readonly mode = "demo" as const;
+  readonly name = "demo" as const;
+  readonly model = "demo";
 
   async classify(
     emails: Array<{ id: string; fromName: string; fromEmail: string; subject: string; snippet: string }>,

@@ -212,7 +212,7 @@ export function SettingsPage({ onSignedOut }: { onSignedOut: () => void }) {
           </span>
           <span>AI summaries</span>
           <span>
-            <ServiceBadge mode={config.services.ai} /> {config.aiModel ? `Anthropic ${config.aiModel}` : ""}
+            <ServiceBadge mode={config.services.ai} /> {config.aiModel ? `${config.aiProvider === "gemini" ? "Google Gemini" : "Anthropic Claude"} (${config.aiModel})` : ""}
           </span>
           <span>Voice</span>
           <span>

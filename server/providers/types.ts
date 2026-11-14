@@ -71,8 +71,13 @@ export interface SummaryRequest {
   listenerName: string;
 }
 
+export type AiProviderName = "anthropic" | "gemini" | "demo";
+
 export interface AiProvider {
   readonly mode: ProviderMode;
+  readonly name: AiProviderName;
+  /** Model id, used in cache keys so switching models never replays an old summary. */
+  readonly model: string;
   /** Returns message id -> category name (always one of the given names). */
   classify(emails: Array<Pick<EmailForAi, "id" | "fromName" | "fromEmail" | "subject"> & { snippet: string }>, categories: CategoryForAi[]): Promise<Map<string, string>>;
   summarize(req: SummaryRequest): Promise<string>;

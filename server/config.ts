@@ -39,6 +39,9 @@ export interface AppConfig {
   cacheTtlHours: number;
   google: { clientId: string; clientSecret: string; redirectUri: string } | null;
   anthropic: { apiKey: string; model: string; refusalFallback: boolean } | null;
+  gemini: { apiKey: string; model: string } | null;
+  /** Which AI writes summaries and sorts mail. null = none configured. */
+  aiProvider: "anthropic" | "gemini" | null;
   elevenlabs: {
     apiKey: string;
     modelId: string;
@@ -120,6 +123,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, overrides: Part
   const googleSecret = str(env, "GOOGLE_CLIENT_SECRET");
   const anthropicKey = str(env, "ANTHROPIC_API_KEY");
   const elevenKey = str(env, "ELEVENLABS_API_KEY");
+  const geminiKey = str(env, "GEMINI_API_KEY");
+  const choice = str(env, "AI_PROVIDER").toLowerCase();
+  if (choice && choice !== "anthropic" && choice !== "gemini") {
+    throw new Error(`AI_PROVIDER must be "anthropic" or "gemini" (got "${choice}").`);
+  }
+  // An explicit AI_PROVIDER wins; otherwise use whichever key is present (Anthropic first).
+  const aiProvider: AppConfig["aiProvider"] =
+    choice === "anthropic" ? (anthropicKey ? "anthropic" : null) : choice === "gemini" ? (geminiKey ? "gemini" : null) : anthropicKey ? "anthropic" : geminiKey ? "gemini" : null;
 
   const config: AppConfig = {
     port,
@@ -144,6 +155,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, overrides: Part
           refusalFallback: str(env, "ANTHROPIC_REFUSAL_FALLBACK").toLowerCase() !== "off",
         }
       : null,
+    gemini: geminiKey ? { apiKey: geminiKey, model: str(env, "GEMINI_MODEL") || "gemini-3.8-flash" } : null,
+    aiProvider,
     elevenlabs: elevenKey
       ? {
           apiKey: elevenKey,

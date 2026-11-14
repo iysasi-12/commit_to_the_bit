@@ -118,6 +118,31 @@ describe("sign-in, sessions and request safety", () => {
     assert.equal(h.ai.summarizeCalls + h.ai.classifyCalls, 0, "no AI call before consent");
   });
 
+  it("asks people to agree again when the AI company changes", async () => {
+    const { client } = await signedInUser(h, "switchai");
+    const cfg = await client.get("/api/config");
+    assert.equal(cfg.body.consentVersion, "2026-11-14+anthropic");
+    assert.equal(cfg.body.aiProvider, "anthropic");
+    const { GeminiAiProvider } = await import("../server/providers/gemini.ts");
+    const geminiApp = await startHarness({ providers: { ai: new GeminiAiProvider({ apiKey: "x", model: "gemini-test" }) } });
+    try {
+      const other = new Client(geminiApp.baseUrl);
+      const gcfg = await other.get("/api/config");
+      assert.equal(gcfg.body.consentVersion, "2026-11-14+gemini");
+      // Consent recorded for Claude doesn't carry over to Gemini.
+      geminiApp.deps.store.createUser({ googleSub: null, email: "x", name: "X", isDemo: false, now: Date.now() });
+      const u = await signedInUser(geminiApp, "gem", { consent: false });
+      const userRow = geminiApp.deps.store.getUser(u.userId)!;
+      geminiApp.deps.store.setConsent(userRow.id, Date.now(), "2026-11-14+anthropic");
+      const blocked = await u.client.post("/api/summaries", { scope: "many" });
+      assert.equal(blocked.body.error.code, "CONSENT_REQUIRED");
+      const me = await u.client.get("/api/me");
+      assert.equal(me.body.user.consent.accepted, false);
+    } finally {
+      await geminiApp.close();
+    }
+  });
+
   it("validates settings strictly", async () => {
     const { client } = await signedInUser(h, "settings");
     assert.equal((await client.patch("/api/settings", { speakingSpeed: 3 })).status, 400);
