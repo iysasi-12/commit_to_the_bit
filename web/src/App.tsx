@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
 import { ApiError, api, errorMessage } from "./api.ts";
 import { ConsentSheet } from "./components/ConsentSheet.tsx";
+import { DemoNotice } from "./components/DemoNotice.tsx";
 import { MessageSheet } from "./components/MessageSheet.tsx";
 import { Player } from "./components/Player.tsx";
 import { SignIn } from "./components/SignIn.tsx";
 import { Icon, type IconName } from "./icons.tsx";
 import { FilterPage } from "./pages/FilterPage.tsx";
 import { InboxPage } from "./pages/InboxPage.tsx";
+import { MailConceptPage } from "./pages/MailConceptPage.tsx";
 import { SettingsPage } from "./pages/SettingsPage.tsx";
 import { VoicePage } from "./pages/VoicePage.tsx";
 import { AppProvider, PlayerProvider, useApp, usePlayer } from "./state.tsx";
@@ -16,27 +18,13 @@ const TABS: Array<{ id: Tab; label: string; icon: IconName }> = [
   { id: "inbox", label: "Inbox", icon: "inbox" },
   { id: "filter", label: "Filter", icon: "filter" },
   { id: "voice", label: "Voice", icon: "voice" },
+  { id: "gmail", label: "Gmail view", icon: "panel" },
   { id: "settings", label: "Settings", icon: "settings" },
 ];
 
 function readInitialTab(): Tab {
   const hash = window.location.hash.replace("#", "");
   return (TABS.find((t) => t.id === hash)?.id ?? "inbox") as Tab;
-}
-
-function DemoNotice() {
-  const { me, config } = useApp();
-  const parts: string[] = [];
-  if (me.isDemo) parts.push("sample inbox");
-  if (config.services.ai === "demo") parts.push("summaries without AI");
-  if (config.services.voice === "demo") parts.push("placeholder audio");
-  if (parts.length === 0) return null;
-  return (
-    <div className="notice notice-warn small" role="note" style={{ marginBottom: 8 }}>
-      <strong>Demo mode</strong>
-      Using {parts.join(", ")}. {config.services.ai === "demo" || config.services.voice === "demo" ? "Add API keys in .env to switch these to the real services." : ""}
-    </div>
-  );
 }
 
 function Shell({ onSignedOut }: { onSignedOut: () => void }) {
@@ -61,8 +49,9 @@ function Shell({ onSignedOut }: { onSignedOut: () => void }) {
   }, []);
 
   useEffect(() => {
-    document.documentElement.style.setProperty("--player-h", state.status === "idle" ? "0px" : "250px");
-  }, [state.status]);
+    // The Gmail view has its own player in the side panel, so the bottom player is hidden there.
+    document.documentElement.style.setProperty("--player-h", state.status === "idle" || tab === "gmail" ? "0px" : "250px");
+  }, [state.status, tab]);
 
   return (
     <div className="shell">
@@ -77,20 +66,22 @@ function Shell({ onSignedOut }: { onSignedOut: () => void }) {
         ))}
       </nav>
       <main className="main">
-        <div className="page">
+        <div className={tab === "gmail" ? "page page-wide" : "page"}>
           <div className="topbar">
             <div className="brand">
               <img src="/icon.svg" alt="" /> Inbox Voice
             </div>
           </div>
-          <DemoNotice />
+          {/* The Inbox shows this under its AI Summary button instead, so the button stays at the top. */}
+          {tab !== "inbox" && <DemoNotice />}
         </div>
         {tab === "inbox" && <InboxPage onOpen={setOpen} />}
         {tab === "filter" && <FilterPage onOpen={setOpen} />}
         {tab === "voice" && <VoicePage />}
+        {tab === "gmail" && <MailConceptPage />}
         {tab === "settings" && <SettingsPage onSignedOut={onSignedOut} />}
       </main>
-      <Player />
+      <Player hidden={tab === "gmail"} />
       <nav className="tabbar" aria-label="Main">
         {TABS.map((t) => (
           <button key={t.id} aria-current={tab === t.id ? "page" : undefined} onClick={() => setTab(t.id)}>

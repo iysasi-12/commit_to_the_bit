@@ -191,7 +191,7 @@ export function VoicePage() {
                   : `${own.status === "preview" ? "Waiting for your approval" : "Approved"}${own.recordingKept ? " · recording kept on server" : " · recording discarded"}`}
               </div>
             </div>
-            {own.status === "preview" ? (
+            {own.madeInDemo && data?.mode === "live" ? null : own.status === "preview" ? (
               <button className="btn btn-sm btn-primary" onClick={() => setSetupOpen(true)}>
                 Review
               </button>

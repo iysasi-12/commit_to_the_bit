@@ -33,11 +33,22 @@ function mockGemini(respond: () => { status?: number; body: unknown }) {
   return calls;
 }
 
+function mockGeminiByUrl(respond: (url: string) => { status?: number; body: unknown }) {
+  const urls: string[] = [];
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    urls.push(url);
+    const r = respond(url);
+    return new Response(JSON.stringify(r.body), { status: r.status ?? 200, headers: { "content-type": "application/json" } });
+  }) as typeof fetch;
+  return urls;
+}
+
 function reply(text: string, finishReason = "STOP") {
   return { candidates: [{ content: { role: "model", parts: [{ text }] }, finishReason }] };
 }
 
-const cfg = { apiKey: "AIza-test-key", model: "gemini-3.8-flash" };
+const cfg = { apiKey: "AIza-test-key", model: "gemini-3.8-flash", fallbackModel: null };
 const req: SummaryRequest = {
   emails: [{ id: "1", fromName: "Mom", fromEmail: "mom@x.com", subject: "Dinner", date: "2026-11-14T12:00:00Z", text: "Dinner at 6.", truncated: false }],
   scope: "one",
@@ -106,6 +117,29 @@ describe("Gemini provider (mocked HTTP through the official SDK)", () => {
     });
   });
 
+  it("switches to the backup model once when the main model is overloaded", async () => {
+    const calls = mockGeminiByUrl((url) =>
+      url.includes("models/main-model:") ? { status: 503, body: { error: { code: 503, message: "high demand", status: "UNAVAILABLE" } } } : { body: reply("Backup summary.") },
+    );
+    const ai = new GeminiAiProvider({ apiKey: "k", model: "main-model", fallbackModel: "backup-model" });
+    assert.equal(await ai.summarize(req), "Backup summary.");
+    assert.ok(calls.some((u) => u.includes("models/main-model:")));
+    assert.ok(calls.at(-1)!.includes("models/backup-model:"));
+  });
+
+  it("reports busy clearly when both models are overloaded", async () => {
+    mockGeminiByUrl(() => ({ status: 503, body: { error: { code: 503, message: "high demand", status: "UNAVAILABLE" } } }));
+    const ai = new GeminiAiProvider({ apiKey: "k", model: "main-model", fallbackModel: "backup-model" });
+    await assert.rejects(ai.summarize(req), (e: unknown) => e instanceof AppError && e.code === "AI_BUSY" && e.retryable);
+  });
+
+  it("doesn't use the backup for a bad key", async () => {
+    const calls = mockGeminiByUrl(() => ({ status: 401, body: { error: { code: 401, message: "bad key", status: "UNAUTHENTICATED" } } }));
+    const ai = new GeminiAiProvider({ apiKey: "k", model: "main-model", fallbackModel: "backup-model" });
+    await assert.rejects(ai.summarize(req), (e: unknown) => e instanceof AppError && e.code === "AI_CONFIG");
+    assert.ok(calls.every((u) => !u.includes("backup-model")));
+  });
+
   it("maps a wrong model name to a config error", async () => {
     mockGemini(() => ({ status: 404, body: { error: { code: 404, message: "model not found", status: "NOT_FOUND" } } }));
     await assert.rejects(new GeminiAiProvider(cfg).summarize(req), (e: unknown) => e instanceof AppError && e.code === "AI_CONFIG" && /GEMINI_MODEL/.test(e.message));
@@ -118,10 +152,12 @@ describe("choosing the AI provider from .env", () => {
     assert.equal(loadConfig({ ANTHROPIC_API_KEY: "a", GEMINI_API_KEY: "g" }, base).aiProvider, "anthropic");
     assert.equal(loadConfig({ ANTHROPIC_API_KEY: "a", GEMINI_API_KEY: "g", AI_PROVIDER: "gemini" }, base).aiProvider, "gemini");
   });
-  it("uses Gemini when it's the only key, with a stable default model", () => {
+  it("uses Gemini when it's the only key, with fast default and backup models", () => {
     const c = loadConfig({ GEMINI_API_KEY: "g" }, base);
     assert.equal(c.aiProvider, "gemini");
-    assert.equal(c.gemini?.model, "gemini-3.8-flash");
+    assert.equal(c.gemini?.model, "gemini-3.5-flash-lite");
+    assert.equal(c.gemini?.fallbackModel, "gemini-4-hydrogen");
+    assert.equal(loadConfig({ GEMINI_API_KEY: "g", GEMINI_FALLBACK_MODEL: "off" }, base).gemini?.fallbackModel, null);
   });
   it("uses nothing when the chosen provider has no key, and rejects typos", () => {
     assert.equal(loadConfig({ AI_PROVIDER: "gemini" }, base).aiProvider, null);

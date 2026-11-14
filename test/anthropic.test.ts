@@ -144,6 +144,8 @@ describe("prompt building", () => {
     assert.match(p, /at most 260 words/);
     assert.match(SUMMARY_SYSTEM, /untrusted data/);
     assert.match(SUMMARY_SYSTEM, /Never invent/);
+    assert.match(SUMMARY_SYSTEM, /Summarize; never read emails out/);
+    assert.match(SUMMARY_SYSTEM, /only describe how someone is related .* if the email itself makes it clear/i);
   });
 
   it("strips formatting the voice shouldn't read", () => {

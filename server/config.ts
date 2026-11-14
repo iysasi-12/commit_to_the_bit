@@ -39,7 +39,7 @@ export interface AppConfig {
   cacheTtlHours: number;
   google: { clientId: string; clientSecret: string; redirectUri: string } | null;
   anthropic: { apiKey: string; model: string; refusalFallback: boolean } | null;
-  gemini: { apiKey: string; model: string } | null;
+  gemini: { apiKey: string; model: string; fallbackModel: string | null } | null;
   /** Which AI writes summaries and sorts mail. null = none configured. */
   aiProvider: "anthropic" | "gemini" | null;
   elevenlabs: {
@@ -155,12 +155,20 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, overrides: Part
           refusalFallback: str(env, "ANTHROPIC_REFUSAL_FALLBACK").toLowerCase() !== "off",
         }
       : null,
-    gemini: geminiKey ? { apiKey: geminiKey, model: str(env, "GEMINI_MODEL") || "gemini-3.8-flash" } : null,
+    // Defaults picked from a live comparison on 2026-11-14: flash-lite wrote an equally good
+    // summary in about 1 second; gemini-4-hydrogen took about 12 seconds, so it's the backup.
+    gemini: geminiKey
+      ? {
+          apiKey: geminiKey,
+          model: str(env, "GEMINI_MODEL") || "gemini-3.5-flash-lite",
+          fallbackModel: str(env, "GEMINI_FALLBACK_MODEL").toLowerCase() === "off" ? null : str(env, "GEMINI_FALLBACK_MODEL") || "gemini-4-hydrogen",
+        }
+      : null,
     aiProvider,
     elevenlabs: elevenKey
       ? {
           apiKey: elevenKey,
-          modelId: str(env, "ELEVENLABS_MODEL_ID") || "eleven_multilingual_v2",
+          modelId: str(env, "ELEVENLABS_MODEL_ID") || "eleven_v4",
           outputFormat: str(env, "ELEVENLABS_OUTPUT_FORMAT") || "mp3_44100_128",
           baseUrl: (str(env, "ELEVENLABS_BASE_URL") || "https://api.elevenlabs.io").replace(/\/+$/, ""),
           defaultVoiceId: str(env, "ELEVENLABS_DEFAULT_VOICE_ID") || null,

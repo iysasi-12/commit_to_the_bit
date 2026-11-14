@@ -40,6 +40,9 @@ export function mapGeminiError(err: unknown): AppError {
     if (s === 404) {
       return new AppError("AI_CONFIG", 503, "Gemini doesn't recognize the model name. The app owner should check GEMINI_MODEL in the .env file.", { detail });
     }
+    if (s === 503 || s === 504) {
+      return new AppError("AI_BUSY", 503, "Gemini is very busy right now. Wait a few seconds and try again.", { retryable: true, detail });
+    }
     if (s >= 500) {
       return new AppError("AI_UNAVAILABLE", 502, "Gemini had a temporary problem. Please try again.", { retryable: true, detail });
     }
@@ -51,16 +54,48 @@ export function mapGeminiError(err: unknown): AppError {
   return new AppError("AI_ERROR", 500, "Something went wrong while writing the summary.", { detail: truncateDetail(String(err)) });
 }
 
+/** Busy or slow model: worth trying the backup model once. */
+function isBusy(err: unknown): boolean {
+  return err instanceof ApiError && (err.status === 429 || err.status === 503 || err.status === 504);
+}
+
 /** Google Gemini through the official @google/genai SDK. */
 export class GeminiAiProvider implements AiProvider {
   readonly mode = "live" as const;
   readonly name = "gemini" as const;
   readonly model: string;
+  readonly fallbackModel: string | null;
   private readonly client: GoogleGenAI;
 
-  constructor(cfg: { apiKey: string; model: string }, opts: { baseUrl?: string } = {}) {
+  constructor(cfg: { apiKey: string; model: string; fallbackModel?: string | null }, opts: { baseUrl?: string; timeoutMs?: number } = {}) {
     this.model = cfg.model;
-    this.client = new GoogleGenAI({ apiKey: cfg.apiKey, ...(opts.baseUrl ? { httpOptions: { baseUrl: opts.baseUrl } } : {}) });
+    this.fallbackModel = cfg.fallbackModel && cfg.fallbackModel !== cfg.model ? cfg.fallbackModel : null;
+    this.client = new GoogleGenAI({
+      apiKey: cfg.apiKey,
+      httpOptions: {
+        // The SDK's default is 5 attempts with waits of up to a minute, which leaves
+        // people staring at a spinner. One quick retry, a time limit, then the backup model.
+        timeout: opts.timeoutMs ?? 25_000,
+        retryOptions: { attempts: 2, initialDelay: 1, maxDelay: 3 },
+        ...(opts.baseUrl ? { baseUrl: opts.baseUrl } : {}),
+      },
+    });
+  }
+
+  /** Calls the main model, and the backup model once if the main one is overloaded or slow. */
+  private async generate(contents: string, config: Record<string, unknown>): Promise<GenerateContentResponse> {
+    try {
+      return await this.client.models.generateContent({ model: this.model, contents, config });
+    } catch (err) {
+      if (this.fallbackModel && isBusy(err)) {
+        try {
+          return await this.client.models.generateContent({ model: this.fallbackModel, contents, config });
+        } catch (fallbackErr) {
+          throw mapGeminiError(fallbackErr);
+        }
+      }
+      throw mapGeminiError(err);
+    }
   }
 
   private textOf(response: GenerateContentResponse): string {
@@ -80,35 +115,17 @@ export class GeminiAiProvider implements AiProvider {
   async classify(emails: ClassifyInput, categories: CategoryForAi[]): Promise<Map<string, string>> {
     if (emails.length === 0) return new Map();
     const names = categories.map((c) => c.name);
-    let response: GenerateContentResponse;
-    try {
-      response = await this.client.models.generateContent({
-        model: this.model,
-        contents: buildClassifyPrompt(emails, categories),
-        config: {
-          systemInstruction: CLASSIFY_SYSTEM,
-          responseMimeType: "application/json",
-          responseJsonSchema: classifySchema(names),
-          maxOutputTokens: 8000,
-        },
-      });
-    } catch (err) {
-      throw mapGeminiError(err);
-    }
+    const response = await this.generate(buildClassifyPrompt(emails, categories), {
+      systemInstruction: CLASSIFY_SYSTEM,
+      responseMimeType: "application/json",
+      responseJsonSchema: classifySchema(names),
+      maxOutputTokens: 8000,
+    });
     return parseClassification(this.textOf(response), emails, names);
   }
 
   async summarize(req: SummaryRequest): Promise<string> {
-    let response: GenerateContentResponse;
-    try {
-      response = await this.client.models.generateContent({
-        model: this.model,
-        contents: buildSummaryPrompt(req),
-        config: { systemInstruction: SUMMARY_SYSTEM, maxOutputTokens: 8000 },
-      });
-    } catch (err) {
-      throw mapGeminiError(err);
-    }
+    const response = await this.generate(buildSummaryPrompt(req), { systemInstruction: SUMMARY_SYSTEM, maxOutputTokens: 8000 });
     const text = cleanSpokenText(this.textOf(response));
     if (!text) throw new AppError("AI_ERROR", 502, "The AI returned an empty summary. Please try again.", { retryable: true });
     return text;

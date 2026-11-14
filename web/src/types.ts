@@ -137,4 +137,4 @@ export interface VoicesResponse {
   mine: MyVoice[];
 }
 
-export type Tab = "inbox" | "filter" | "voice" | "settings";
+export type Tab = "inbox" | "filter" | "voice" | "gmail" | "settings";

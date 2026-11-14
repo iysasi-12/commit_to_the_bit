@@ -7,6 +7,16 @@ Hear your Gmail. Sign in with Google, tap **AI Summary**, and an AI voice reads 
 - **Speech and voice cloning**: ElevenLabs Text to Speech and Instant Voice Cloning.
 - **Stack**: TypeScript everywhere. Node 22.18+ runs the `.ts` server directly. Express 5 and SQLite (`node:sqlite`) on the server; React 19 and Vite on the front end; mobile-first and installable to the home screen.
 
+## Screenshots
+
+| Inbox with the **Read by** voice menu | Voice tab (add and choose voices) |
+|---|---|
+| ![Inbox](docs/screenshots/1-inbox-read-by-voice-picker.jpg) | ![Voice tab](docs/screenshots/2-voice-tab.jpg) |
+| **Create your own voice** | **Gmail view** (concept: Inbox Voice as a side panel in your mail app) |
+| ![Create your voice](docs/screenshots/3-create-your-own-voice.jpg) | ![Gmail view](docs/screenshots/4-gmail-view.jpg) |
+
+Presenting it? See **[DEMO.md](DEMO.md)** for a 4-minute demo script.
+
 ---
 
 ## Status: what's verified and what isn't
@@ -95,7 +105,8 @@ What to expect, from Google's docs:
 
 - Go to [Google AI Studio](https://aistudio.google.com/apikey), sign in, and click **Create API key**. New users get a default project and key.
 - Put it in `GEMINI_API_KEY`. If you also have an Anthropic key, set `AI_PROVIDER=gemini` to choose Gemini.
-- Default model: `gemini-3.8-flash` (stable, has a free tier). Override it with `GEMINI_MODEL`.
+- Default model: `gemini-3.5-flash-lite`. In a live comparison on 2026-11-14 it wrote an equally good inbox summary in about 1 second, versus about 12 seconds for `gemini-4-hydrogen`. Override it with `GEMINI_MODEL`.
+- **Backup model**: if the main model is busy or slow (429/503/504), the app retries once with `gemini-4-hydrogen` (`GEMINI_FALLBACK_MODEL`; `off` disables it). Requests time out after 25 seconds instead of the SDK's default of five attempts with waits of up to a minute.
 - **Free tier and privacy**: Google's terms say free-tier prompts and responses may be used to improve Google's products and read by human reviewers. That stops when the key's Google Cloud project has an active billing account (paid tier). Hackathon credits, such as the MLH/Google offers, are applied through a billing account. The app's privacy screen says this whenever Gemini is in use.
 - **Free-tier limits**: limits are per minute and per day. When they're hit, the app shows "Gemini's usage limit was reached… try again".
 - **Region rule**: Google's terms allow only the paid tier for apps offered to people in the EEA, Switzerland or the UK.
@@ -104,7 +115,7 @@ What to expect, from Google's docs:
 ### 3. ElevenLabs (voice)
 
 - Create a key in your ElevenLabs account settings and set `ELEVENLABS_API_KEY`. If you restrict the key's permissions, allow text to speech, voices, and reading the user's subscription.
-- Default model: `eleven_multilingual_v2` (stable long-form speech, 10,000 characters per request). Override it with `ELEVENLABS_MODEL_ID`. The current flagship, `eleven_v4`, is also supported.
+- Default model: `eleven_v4`, ElevenLabs' current flagship and most lifelike, expressive model (10,000 characters per request; tested live 2026-11-14). Override it with `ELEVENLABS_MODEL_ID`, for example `eleven_multilingual_v2` (steadier) or `eleven_flash_v2_5` (cheapest and fastest).
 - **Plans**: I couldn't confirm from ElevenLabs' docs which plan first includes Instant Voice Cloning. The app checks `can_use_instant_voice_cloning` from `GET /v1/user/subscription` before uploading and shows a clear message if cloning isn't available. Ready-made voices work without cloning.
 - **One ElevenLabs account serves everyone.** Each person's clone lives in your account and uses a voice slot. The app never lists or allows other people's clones, and deleting a voice in the app deletes it at ElevenLabs.
 

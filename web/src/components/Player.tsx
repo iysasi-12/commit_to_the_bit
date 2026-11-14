@@ -3,7 +3,7 @@ import { Icon } from "../icons.tsx";
 import { usePlayer } from "../state.tsx";
 import { clock } from "../util.ts";
 
-function statusText(status: string, cached: { summary: boolean; audio: boolean }): string {
+export function statusText(status: string, cached: { summary: boolean; audio: boolean }): string {
   switch (status) {
     case "summarizing":
       return "Reading your emails and writing a summary…";
@@ -22,10 +22,10 @@ function statusText(status: string, cached: { summary: boolean; audio: boolean }
   }
 }
 
-export function Player() {
+export function Player({ hidden = false }: { hidden?: boolean }) {
   const { state, toggle, replay, seek, close, retry } = usePlayer();
   const [showText, setShowText] = useState(false);
-  if (state.status === "idle") return null;
+  if (state.status === "idle" || hidden) return null;
 
   const busy = state.status === "summarizing" || state.status === "voicing";
   const canPlay = Boolean(state.audio) && !busy;
