@@ -123,7 +123,7 @@ export class VoiceService {
     }
     limiter.consume(`library:${user.id}`, config.rateLimits.libraryAddsPerDay, DAY, "adding library voices");
     const name = input.name.trim().slice(0, 60) || "Library voice";
-    const providerVoiceId = await provider.addLibraryVoice(input.publicOwnerId, input.providerVoiceId, `${name} (Inbox Voice)`);
+    const providerVoiceId = await provider.addLibraryVoice(input.publicOwnerId, input.providerVoiceId, `${name} (VocaMail)`);
     const row = store.insertVoice({
       user_id: user.id,
       kind: "library",
@@ -171,8 +171,8 @@ export class VoiceService {
 
     const name = input.name.trim().slice(0, 40) || `${user.name}'s voice`;
     const created = await provider.createClone({
-      name: `${name} (Inbox Voice ${user.id.slice(0, 6)})`,
-      description: "Personal voice created with consent in Inbox Voice. Used only to read this person's own email summaries.",
+      name: `${name} (VocaMail ${user.id.slice(0, 6)})`,
+      description: "Personal voice created with consent in VocaMail. Used only to read this person's own email summaries.",
       files: input.files,
       removeBackgroundNoise: input.removeNoise,
     });

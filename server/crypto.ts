@@ -17,7 +17,7 @@ export class TokenCipher {
   private readonly key: Buffer;
 
   constructor(secret: string) {
-    this.key = Buffer.from(crypto.hkdfSync("sha256", secret, "inbox-voice", "token-encryption-v1", 32));
+    this.key = Buffer.from(crypto.hkdfSync("sha256", secret, "vocamail", "token-encryption-v1", 32));
   }
 
   encrypt(plain: string): string {

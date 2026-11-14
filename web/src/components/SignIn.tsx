@@ -5,7 +5,7 @@ import type { AppConfigInfo } from "../types.ts";
 const SIGNIN_ERRORS: Record<string, string> = {
   ACCESS_DENIED: "Google sign-in was cancelled.",
   STATE_MISMATCH: "That sign-in link expired or was opened in a different browser. Please try again.",
-  GMAIL_SCOPE_MISSING: "Inbox Voice needs permission to read your Gmail. Sign in again and keep the Gmail box checked.",
+  GMAIL_SCOPE_MISSING: "VocaMail needs permission to read your Gmail. Sign in again and keep the Gmail box checked.",
   GOOGLE_NOT_CONFIGURED: "Google sign-in isn't set up on this server yet. The app owner needs to add Google OAuth keys.",
   GOOGLE_CONFIG: "Google sign-in is misconfigured on this server. The app owner should check the OAuth client and redirect URI.",
   GMAIL_REAUTH: "Google didn't grant lasting access. Please sign in again.",
@@ -35,7 +35,7 @@ export function SignIn({ config, errorCode, onSignedIn }: { config: AppConfigInf
         <img src="/icon.svg" alt="" className="signin-logo" />
         <h1>Hear your inbox.</h1>
         <p className="lede">
-          Inbox Voice reads your Gmail, writes a quick AI summary, and plays it in a voice you choose, including your own. The Filter sorts mail into School, Work,
+          VocaMail reads your Gmail, writes a quick AI summary, and plays it in a voice you choose, including your own. The Filter sorts mail into School, Work,
           Transactions and more.
         </p>
         {error && (

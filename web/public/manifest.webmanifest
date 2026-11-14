@@ -1,6 +1,6 @@
 {
-  "name": "Inbox Voice",
-  "short_name": "Inbox Voice",
+  "name": "VocaMail",
+  "short_name": "VocaMail",
   "description": "Hear an AI-voiced summary of your Gmail.",
   "start_url": "/",
   "display": "standalone",

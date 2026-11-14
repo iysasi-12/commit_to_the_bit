@@ -68,7 +68,7 @@ function Shell({ onSignedOut }: { onSignedOut: () => void }) {
     <div className="shell">
       <nav className="sidebar" aria-label="Main">
         <div className="brand">
-          <img src="/icon.svg" alt="" /> Inbox Voice
+          <img src="/icon.svg" alt="" /> VocaMail
         </div>
         {TABS.map((t) => (
           <button key={t.id} aria-current={tab === t.id ? "page" : undefined} onClick={() => setTab(t.id)}>
@@ -80,7 +80,7 @@ function Shell({ onSignedOut }: { onSignedOut: () => void }) {
         <div className="page">
           <div className="topbar">
             <div className="brand">
-              <img src="/icon.svg" alt="" /> Inbox Voice
+              <img src="/icon.svg" alt="" /> VocaMail
             </div>
           </div>
           <DemoNotice />
@@ -137,7 +137,7 @@ export function App() {
     return (
       <main className="signin">
         <div className="card">
-          <h1>Can't load Inbox Voice</h1>
+          <h1>Can't load VocaMail</h1>
           <p className="notice notice-error">{fatal}</p>
           <button className="btn btn-primary" onClick={() => window.location.reload()}>
             Try again
@@ -149,7 +149,7 @@ export function App() {
   if (!config || me === undefined) {
     return (
       <main className="signin" aria-busy="true">
-        <img src="/icon.svg" alt="Loading Inbox Voice" className="signin-logo" />
+        <img src="/icon.svg" alt="Loading VocaMail" className="signin-logo" />
       </main>
     );
   }

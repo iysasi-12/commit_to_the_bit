@@ -142,7 +142,7 @@ export function createApp(deps: AppDeps): { app: express.Express; services: AppS
   // Cross-site request forgery: state-changing API calls must carry a custom header,
   // which other sites can't add without a CORS preflight this server never approves.
   app.use("/api", (req, _res, next) => {
-    if (!["GET", "HEAD", "OPTIONS"].includes(req.method) && req.get("x-inbox-voice") !== "1") {
+    if (!["GET", "HEAD", "OPTIONS"].includes(req.method) && req.get("x-vocamail") !== "1") {
       throw new AppError("CSRF", 403, "This request was blocked for your safety. Reload the page and try again.");
     }
     next();

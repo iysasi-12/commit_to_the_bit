@@ -63,7 +63,7 @@ setInterval(() => runHousekeeping(deps), 3600_000).unref();
 
 app.listen(config.port, () => {
   const mode = (s: string | undefined) => s ?? "not configured";
-  console.log(`\nInbox Voice running at ${config.publicUrl}${dev ? " (dev)" : ""}`);
+  console.log(`\nVocaMail running at ${config.publicUrl}${dev ? " (dev)" : ""}`);
   console.log(`  Gmail sign-in : ${googleAuth ? "Google OAuth configured" : "not configured"}${config.demoMode ? " · demo sign-in on" : ""}`);
   console.log(`  Summaries/AI  : ${mode(providers.ai?.mode)}${providers.ai?.mode === "live" ? ` (${config.anthropic?.model})` : ""}`);
   console.log(`  Voice         : ${mode(providers.voice?.mode)}${providers.voice?.mode === "live" ? ` (${config.elevenlabs?.modelId})` : ""}\n`);

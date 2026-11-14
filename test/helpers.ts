@@ -228,7 +228,7 @@ export async function startHarness(
     rateLimits?: Partial<AppConfig["rateLimits"]>;
   } = {},
 ): Promise<Harness> {
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "inbox-voice-test-"));
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "vocamail-test-"));
   const base = loadConfig({}, { sessionSecret: "test-secret-".padEnd(48, "x"), dataDir });
   const config: AppConfig = {
     ...base,
@@ -311,7 +311,7 @@ export class Client {
 
   async request<T = any>(method: string, p: string, opts: { json?: unknown; form?: FormData; csrf?: boolean; redirect?: "manual" | "follow" } = {}): Promise<Res<T>> {
     const headers: Record<string, string> = {};
-    if (opts.csrf !== false) headers["x-inbox-voice"] = "1";
+    if (opts.csrf !== false) headers["x-vocamail"] = "1";
     if (this.cookies.size) headers.cookie = this.cookieHeader();
     let body: BodyInit | undefined;
     if (opts.json !== undefined) {
