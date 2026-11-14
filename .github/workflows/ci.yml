@@ -1,0 +1,208 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  # Cancel superseded PR runs, but never cut off a deploy to main halfway through.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/vocamail
+
+jobs:
+  test:
+    name: Typecheck, test, build (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 22 is the minimum in package.json engines and what the Docker image runs.
+        node: ["22", "24"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Build web app
+        run: npm run build
+
+  docker:
+    name: Docker image builds and boots
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: vocamail:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test (demo mode, no keys)
+        run: |
+          docker run -d --name app -p 3000:3000 \
+            -e DEMO_MODE=true \
+            -e SESSION_SECRET="$(openssl rand -base64 48)" \
+            vocamail:ci
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:3000/ >/dev/null; then
+              echo "App is up"; exit 0
+            fi
+            sleep 1
+          done
+          echo "App did not come up"; docker logs app; exit 1
+
+      - name: Container logs
+        if: always()
+        run: docker logs app || true
+
+  deploy:
+    name: Deploy to Vultr
+    runs-on: ubuntu-latest
+    needs: [test, docker]
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    environment:
+      name: production
+      url: https://${{ vars.VOCAMAIL_DOMAIN }}
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check required settings
+        env:
+          DOMAIN: ${{ vars.VOCAMAIL_DOMAIN }}
+          HOST: ${{ secrets.VULTR_HOST }}
+          USER: ${{ secrets.VULTR_USER }}
+          KEY: ${{ secrets.VULTR_SSH_KEY }}
+          SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
+        run: |
+          missing=0
+          for name in DOMAIN HOST USER KEY SESSION_SECRET; do
+            if [ -z "${!name}" ]; then echo "::error::Missing setting: $name (see deploy/README.md)"; missing=1; fi
+          done
+          exit $missing
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:${{ github.sha }}
+            ${{ env.IMAGE }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Set up SSH
+        env:
+          HOST: ${{ secrets.VULTR_HOST }}
+          KEY: ${{ secrets.VULTR_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$KEY" > ~/.ssh/deploy_key && chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -T 15 -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          cat >> ~/.ssh/config <<EOF
+          Host vultr
+            HostName $HOST
+            User ${{ secrets.VULTR_USER }}
+            IdentityFile ~/.ssh/deploy_key
+            IdentitiesOnly yes
+          EOF
+
+      - name: Write server .env
+        env:
+          VOCAMAIL_DOMAIN: ${{ vars.VOCAMAIL_DOMAIN }}
+          DEMO_MODE: ${{ vars.DEMO_MODE || 'true' }}
+          SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+        run: |
+          umask 077
+          {
+            echo "VOCAMAIL_IMAGE=${IMAGE}:${GITHUB_SHA}"
+            echo "VOCAMAIL_DOMAIN=${VOCAMAIL_DOMAIN}"
+            echo "PUBLIC_URL=https://${VOCAMAIL_DOMAIN}"
+            echo "DEMO_MODE=${DEMO_MODE}"
+            for name in SESSION_SECRET GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET ANTHROPIC_API_KEY ELEVENLABS_API_KEY; do
+              # Only write keys that are set; anything missing falls back to demo mode.
+              if [ -n "${!name}" ]; then echo "${name}=${!name}"; fi
+            done
+          } > deploy/.env
+
+      - name: Copy files and restart
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ssh vultr 'mkdir -p /opt/vocamail'
+          scp deploy/docker-compose.yml deploy/Caddyfile deploy/.env vultr:/opt/vocamail/
+          ssh vultr 'chmod 600 /opt/vocamail/.env'
+          # The repo is private, so the server logs in to GHCR with this run's short-lived token.
+          echo "$GHCR_TOKEN" | ssh vultr "
+            set -e
+            cd /opt/vocamail
+            docker login ghcr.io -u '${{ github.actor }}' --password-stdin
+            docker compose pull
+            docker compose up -d --remove-orphans
+            docker logout ghcr.io
+            docker image prune -f
+          "
+
+      - name: Check the live site
+        env:
+          DOMAIN: ${{ vars.VOCAMAIL_DOMAIN }}
+        run: |
+          # The first deploy waits for Caddy to get an HTTPS certificate.
+          for i in $(seq 1 30); do
+            if curl -fsS "https://${DOMAIN}/" >/dev/null; then
+              echo "Live at https://${DOMAIN}"; exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::https://${DOMAIN} did not respond"
+          ssh vultr 'cd /opt/vocamail && docker compose ps && docker compose logs --tail=80'
+          exit 1
+
+      - name: Clean up
+        if: always()
+        run: rm -f deploy/.env ~/.ssh/deploy_key

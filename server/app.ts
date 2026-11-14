@@ -92,6 +92,8 @@ export function createApp(deps: AppDeps): { app: express.Express; services: AppS
   const users = new WeakMap<Request, UserRow>();
 
   const app = express();
+  // Behind a reverse proxy, read the client IP from X-Forwarded-For so rate limits are per person.
+  if (config.trustProxyHops > 0) app.set("trust proxy", config.trustProxyHops);
   app.disable("x-powered-by");
 
   // ---------- security basics ----------
