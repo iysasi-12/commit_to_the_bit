@@ -8,6 +8,8 @@ export function GET() {
   return NextResponse.json(
     {
       ok: true,
+      // Lets the Chrome extension tell this app apart from anything else on the same domain.
+      app: "voice-inbox-assistant",
       commit: process.env.APP_COMMIT || "unknown",
       configured: {
         google: Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET),

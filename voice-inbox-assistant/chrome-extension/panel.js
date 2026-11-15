@@ -2,19 +2,21 @@
 // ?length=…&autostart=1 so it starts summarizing right away.
 
 // ---- Where the side panel finds the app ----------------------------------------------------
-// The live site, and this computer as the backup (start it with `npm.cmd run dev`).
-// The Options page picks one of three modes (right-click the extension icon → Options):
-//   "auto"  (default) tries the live site first, and uses this computer if the live site
-//           doesn't answer within a few seconds — the presentation backup, no editing needed.
+// FOR NOW: this computer only (start the app with `npm.cmd run dev`).
+//
+// TO USE THE LIVE SITE LATER: uncomment the three lines marked LIVE below, switch DEFAULT_MODE
+// to "auto", and uncomment the two matching choices in options.html and options.js.
+//   "auto"  tries the live site first, and uses this computer if the live site isn't healthy.
 //   "live"  only the live site.
 //   "local" only this computer.
-const LIVE_URL = "https://vocamail.biz/";
+// const LIVE_URL = "https://vocamail.biz/"; // LIVE
 const LOCAL_URL = "http://localhost:3000/";
 const TRY_ORDER = {
-  auto: [LIVE_URL, LOCAL_URL],
-  live: [LIVE_URL],
+  // auto: [LIVE_URL, LOCAL_URL], // LIVE
+  // live: [LIVE_URL], // LIVE
   local: [LOCAL_URL],
 };
+const DEFAULT_MODE = "local"; // later: "auto"
 const TIMEOUT_MS = 4000;
 // ---------------------------------------------------------------------------------------------
 
@@ -26,16 +28,17 @@ let lastRequestAt = 0;
 let appUrl = null;
 
 /**
- * True only when the app itself is working: /api/health must answer {"ok": true}. A server that
- * is up but shows an error page (e.g. the app crashed behind Caddy) counts as down, so Automatic
- * mode moves on to this computer.
+ * True only when THIS app is there and working: /api/health must answer
+ * {"ok": true, "app": "voice-inbox-assistant"}. A server that is up but shows an error page, or a
+ * different app on the same domain (which may also refuse to be shown in a panel), counts as
+ * down, so Automatic mode moves on to this computer.
  */
 async function healthy(url) {
   try {
     const res = await fetch(`${url}api/health`, { cache: "no-store", signal: AbortSignal.timeout(TIMEOUT_MS) });
     if (!res.ok) return false;
     const body = await res.json();
-    return body?.ok === true;
+    return body?.ok === true && body?.app === "voice-inbox-assistant";
   } catch {
     return false;
   }
@@ -44,7 +47,8 @@ async function healthy(url) {
 /** The first server in the chosen mode whose app is healthy, or null. */
 async function pickServer() {
   const { viaServer } = await chrome.storage.sync.get("viaServer");
-  const order = TRY_ORDER[viaServer] ?? TRY_ORDER.auto;
+  // A mode saved earlier ("auto"/"live") that's commented out above falls back to the default.
+  const order = TRY_ORDER[viaServer] ?? TRY_ORDER[DEFAULT_MODE];
   for (const url of order) {
     if (await healthy(url)) return { url, order };
   }
