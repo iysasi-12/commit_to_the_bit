@@ -4,6 +4,7 @@ import { convert } from "html-to-text";
 import { ApiError } from "@/lib/errors";
 import { sessionExpired } from "@/lib/server-auth";
 import { scanWithoutSensitive, type SensitiveKind } from "@/lib/sensitive";
+import { gmailQuery, type TimeWindow } from "@/lib/time-window";
 
 export interface ParsedEmail {
   id: string;
@@ -105,7 +106,9 @@ export interface InboxScan {
  * Reads the newest `count` inbox emails (read-only). Sensitive emails (banking, medical,
  * government, security codes) are detected from sender + subject only and never opened.
  */
-export async function fetchRecentEmails(accessToken: string, count: number): Promise<InboxScan> {
+export async function fetchRecentEmails(accessToken: string, count: number, hours: TimeWindow | null = null): Promise<InboxScan> {
+  // "Last 8/16/48 hours": only emails after that exact moment (still at most `count`).
+  const q = gmailQuery(hours);
   const oauth = new google.auth.OAuth2();
   oauth.setCredentials({ access_token: accessToken });
   // GMAIL_API_ROOT is for automated tests only (a fake Gmail on this computer); never set it on the server.
@@ -114,7 +117,7 @@ export async function fetchRecentEmails(accessToken: string, count: number): Pro
     return await scanWithoutSensitive<ParsedEmail>(
       {
         listIds: async (n) => {
-          const list = await gmail.users.messages.list({ userId: "me", maxResults: n, labelIds: ["INBOX"] });
+          const list = await gmail.users.messages.list({ userId: "me", maxResults: n, labelIds: ["INBOX"], ...(q ? { q } : {}) });
           return (list.data.messages ?? []).map((m) => m.id).filter((id): id is string => Boolean(id));
         },
         // Step 1: sender and subject only, no body.

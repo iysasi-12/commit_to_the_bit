@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { reconnectGoogle, signOutAction } from "@/app/actions";
 import { BUTLER_NAME, VoiceBox } from "@/components/VoiceBox";
 import type { SummaryLength } from "@/lib/system-prompt";
+import { parseWindow, TIME_WINDOWS, windowLabel, type TimeWindow } from "@/lib/time-window";
 import { composeSpoken } from "@/lib/triage";
 import { DEFAULT_VOICE, readError, storageGet, storageSet, type ActiveVoice, type QueueItem } from "@/components/types";
 
@@ -19,6 +20,8 @@ type Group = QueueItem["group"];
 
 interface ScanStats {
   fetched: number;
+  /** The time window used (8, 16 or 48 hours), or null for "newest emails, any time". */
+  hours: TimeWindow | null;
   spam: number;
   failed: number;
   sensitive: number;
@@ -35,6 +38,8 @@ const GROUP_STYLE: Record<Group, string> = {
   transactions: "bg-emerald-500/20 text-emerald-300",
 };
 const TABS: TabId[] = ["all", "work", "school", "personal", "transactions"];
+/** "Up to" choices. With a time window this is a cap (and protects the Gemini quota). */
+const COUNTS = [5, 10, 15, 20, 25, 30, 40, 50];
 
 type PlayStatus = "idle" | "loading" | "playing" | "paused" | "ended" | "error";
 
@@ -42,6 +47,8 @@ export function Dashboard({ name, email, sessionExpired }: { name: string; email
   const [voice, setVoice] = useState<ActiveVoice>(DEFAULT_VOICE);
   const [expired, setExpired] = useState(sessionExpired);
   const [count, setCount] = useState(10);
+  // null = the newest emails, any time; otherwise only emails from the last 8, 16 or 48 hours.
+  const [hours, setHours] = useState<TimeWindow | null>(null);
   const [length, setLength] = useState<SummaryLength>("medium");
   // Default: read every summary back to back. Off: stop after each email and wait for Next.
   const [continuous, setContinuous] = useState(true);
@@ -70,18 +77,23 @@ export function Dashboard({ name, email, sessionExpired }: { name: string; email
       voiceRef.current = saved;
     }
     setContinuous(storageGet<boolean>("via.continuous", true));
+    const savedCount = storageGet<number>("via.count", 10);
+    if (COUNTS.includes(savedCount)) setCount(savedCount);
     const savedLength = storageGet<SummaryLength>("via.length", "medium");
-    // Opened from the Gmail button: ?length=short|medium|long&autostart=1
+    // Opened from the Gmail button: ?length=short|medium|long&autostart=1 (and optionally &hours=8|16|48)
     const params = new URLSearchParams(window.location.search);
     const fromUrl = params.get("length");
     const chosen: SummaryLength = fromUrl === "short" || fromUrl === "medium" || fromUrl === "long" ? fromUrl : savedLength;
     setLength(chosen);
     if (fromUrl) storageSet("via.length", chosen);
+    const chosenHours = params.has("hours") ? parseWindow(params.get("hours")) : parseWindow(storageGet<number | null>("via.hours", null));
+    setHours(chosenHours);
+    if (params.has("hours")) storageSet("via.hours", chosenHours);
     if (params.get("autostart") === "1" && !autoStarted.current) {
       autoStarted.current = true;
       // Drop the params so a page refresh doesn't start another scan.
       window.history.replaceState(null, "", window.location.pathname);
-      void scan(chosen);
+      void scan(chosen, chosenHours, COUNTS.includes(savedCount) ? savedCount : 10);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -147,8 +159,11 @@ export function Dashboard({ name, email, sessionExpired }: { name: string; email
     [onAuthError],
   );
 
-  async function scan(lengthOverride?: SummaryLength) {
+  // Overrides are for the autostart scan, which runs before the saved choices reach state.
+  async function scan(lengthOverride?: SummaryLength, hoursOverride?: TimeWindow | null, countOverride?: number) {
     const summaryLength = lengthOverride ?? length;
+    const window_ = hoursOverride !== undefined ? hoursOverride : hours;
+    const max = countOverride ?? count;
     setScanning(true);
     setScanError(null);
     setStats(null);
@@ -169,7 +184,8 @@ export function Dashboard({ name, email, sessionExpired }: { name: string; email
       }
       const res = await fetch("/api/emails", { method: "POST", headers: { "Content-Type": "application/json" }, // Character voices also bring their way of speaking.
         body: JSON.stringify({
-          count,
+          count: max,
+          hours: window_,
           length: summaryLength,
           persona: voiceRef.current.label === BUTLER_NAME ? "butler" : voiceRef.current.label === "The Angry Coach" ? "coach" : "standard",
         }),
@@ -285,14 +301,43 @@ export function Dashboard({ name, email, sessionExpired }: { name: string; email
         </h2>
         <div className="flex flex-wrap items-end gap-3">
           <label className="text-sm font-semibold">
-            Recent emails
-            <select className="ml-2 min-h-11 rounded-lg border border-slate-600 bg-slate-900 px-3 py-2" value={count} onChange={(e) => setCount(Number(e.target.value))} disabled={scanning}>
-              {[5, 10, 15, 20, 25, 30].map((n) => (
+            From
+            <select
+              className="ml-2 min-h-11 rounded-lg border border-slate-600 bg-slate-900 px-3 py-2"
+              value={hours ?? ""}
+              onChange={(e) => {
+                const h = parseWindow(e.target.value);
+                setHours(h);
+                storageSet("via.hours", h);
+              }}
+              disabled={scanning}
+            >
+              <option value="">Newest emails</option>
+              {TIME_WINDOWS.map((h) => (
+                <option key={h} value={h}>
+                  Last {h} hours
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="text-sm font-semibold">
+            Up to
+            <select
+              className="mx-2 min-h-11 rounded-lg border border-slate-600 bg-slate-900 px-3 py-2"
+              value={count}
+              onChange={(e) => {
+                setCount(Number(e.target.value));
+                storageSet("via.count", Number(e.target.value));
+              }}
+              disabled={scanning}
+            >
+              {COUNTS.map((n) => (
                 <option key={n} value={n}>
                   {n}
                 </option>
               ))}
             </select>
+            emails
           </label>
           <div className="text-sm font-semibold">
             Summary length
@@ -337,7 +382,8 @@ export function Dashboard({ name, email, sessionExpired }: { name: string; email
         )}
         {stats && (
           <p className="mt-3 text-sm text-slate-400">
-            Checked {stats.fetched} emails · {queue.filter((q) => q.group !== "skipped").length} to hear · {stats.spam} spam skipped
+            Checked {stats.fetched} {stats.fetched === 1 ? "email" : "emails"}
+            {stats.hours ? ` from the last ${stats.hours} hours` : ""} · {queue.filter((q) => q.group !== "skipped").length} to hear · {stats.spam} spam skipped
             {stats.failed ? ` · ${stats.failed} couldn't be summarized` : ""}
             {stats.sensitive > 0 && (
               <span className="ml-1 font-semibold text-rose-300">
@@ -353,7 +399,11 @@ export function Dashboard({ name, email, sessionExpired }: { name: string; email
         )}
       </section>
 
-      {stats && queue.length === 0 && <p className="rounded-xl bg-slate-800 px-4 py-3">Nothing to hear: every email was spam or couldn&apos;t be summarized.</p>}
+      {stats && queue.length === 0 && (
+        <p className="rounded-xl bg-slate-800 px-4 py-3">
+          {stats.fetched === 0 ? `No emails in ${windowLabel(stats.hours)}.` : "Nothing to hear: every email was spam or couldn't be summarized."}
+        </p>
+      )}
 
       {queue.length > 0 && (
         <nav className="flex flex-wrap gap-2" role="tablist" aria-label="Email categories">

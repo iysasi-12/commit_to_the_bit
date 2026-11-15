@@ -8,7 +8,9 @@ Sign in with Google, click **Scan & Summarize Inbox**, and hear your newest emai
 
 ## How it works
 
-1. **Scan** (`POST /api/emails`): reads the newest N inbox emails (default 10).
+1. **Scan** (`POST /api/emails`): reads your inbox emails, either the newest ones or only those from the **last 8, 16 or 48 hours** (the **From** menu), up to the **Up to** limit (default 10, max 50).
+   - Gmail search has no hours unit, so a window becomes an exact cutoff: `after:<unix seconds>`.
+   - Each email is one Gemini request, so on the free tier keep the limit small.
    - Sensitive emails (banking, medical, government, security codes) are recognized from the sender and subject only. Their text is never downloaded, summarized or spoken; the app just says how many it skipped.
    - Gemini summarizes each remaining email separately, a few at a time. Output of exactly `DISCARDED: SPAM` is dropped.
    - The category comes from Gemini's lead-in ("Starting with Work and School.", …). The app then **removes Gemini's lead-ins** (persona variants too, like "Finally, Transactions, sir.") and orders emails Work → School → Personal → Transactions.
@@ -83,7 +85,7 @@ The `chrome-extension/` folder adds a **🎧 AI Summary** button to Gmail that o
 4. In Gmail, click **🎧 AI Summary** and pick Short, Medium or Long.
 
 **Which server?** Right-click the extension icon → **Options**:
-- *Automatic* (default): vocamail.biz, or this computer (http://localhost:3000) if vocamail.biz doesn't answer within 4 seconds.
+- *Automatic* (default): vocamail.biz, or this computer (http://localhost:3000) if vocamail.biz isn't healthy. It asks `/api/health`, so it also switches when the server is up but the app has crashed.
 - *vocamail.biz only*.
 - *This computer only*.
 
@@ -173,6 +175,10 @@ Deploys are automatic: every push to `main` runs the repo's CI (`.github/workflo
 2. Copies `deploy/docker-compose.yml`, `deploy/Caddyfile` and a generated `.env` to `/opt/voice-inbox` on the server over SSH. If the older VocaMail stack is running in `/opt/vocamail`, it is stopped first, because only one Caddy can own ports 80 and 443.
 3. Starts the app with Caddy in front (automatic HTTPS for the domain and `www`).
 4. **Fails unless `https://<domain>/api/health` reports the exact commit that was tested**, so a green deploy means the live site runs the tested version.
+5. Runs the full live test suite (`check:live`, 3 rounds) against the deployed site.
+6. **If any of that fails, it puts the previous version back automatically.** The run stays red so the problem gets fixed, but the live site keeps working.
+
+In the side panel, Google sign-in happens in a new tab. The panel notices when you've signed in and refreshes itself.
 
 You can also deploy by hand: **Actions → CI → Run workflow** on `main`.
 

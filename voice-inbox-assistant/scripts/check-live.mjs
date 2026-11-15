@@ -29,7 +29,8 @@ function readEnv(file) {
   );
 }
 const local = readEnv(".env.local");
-const secret = isLocal ? local.AUTH_SECRET : readEnv(".env.live").AUTH_SECRET;
+// CHECK_AUTH_SECRET lets CI pass the live site's secret without writing a file.
+const secret = process.env.CHECK_AUTH_SECRET || (isLocal ? local.AUTH_SECRET : readEnv(".env.live").AUTH_SECRET);
 const adminEmail = (local.ADMIN_EMAILS ?? "").split(",")[0]?.trim() ?? "";
 
 const session = (email) =>
@@ -89,6 +90,12 @@ const PUBLIC = [
   }],
   ["www redirects to the main domain", async () => {
     if (isLocal) return [true, "skipped for localhost"];
+    // A missing www DNS record is worth fixing but doesn't break the app: warn, don't fail.
+    try {
+      await resolve4(`www.${host}`);
+    } catch {
+      return ["warn", `no DNS record for www.${host} yet; add an A record`];
+    }
     const res = await fetch(`https://www.${host}/`, { redirect: "manual", signal: AbortSignal.timeout(15000) });
     const to = res.headers.get("location") ?? "";
     return [res.status >= 300 && res.status < 400 && to.startsWith(`https://${host}`), `${res.status} -> ${to}`];
@@ -200,7 +207,7 @@ for (let round = 1; round <= rounds; round++) {
     }
     ran++;
     if (!ok) failures++;
-    console.log(`  ${ok ? "PASS" : "FAIL"}  ${name}${detail ? `  (${detail})` : ""}`);
+    console.log(`  ${ok === "warn" ? "WARN" : ok ? "PASS" : "FAIL"}  ${name}${detail ? `  (${detail})` : ""}`);
   }
   if (!signedIn && round === 1) console.log(`  (signed-in checks skipped: no AUTH_SECRET in ${isLocal ? ".env.local" : ".env.live"})`);
   if (round < rounds) await new Promise((r) => setTimeout(r, 3000));

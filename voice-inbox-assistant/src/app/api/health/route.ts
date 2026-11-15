@@ -16,6 +16,8 @@ export function GET() {
         authUrl: process.env.AUTH_URL || process.env.NEXTAUTH_URL || null,
       },
     },
-    { headers: { "Cache-Control": "no-store" } },
+    // Readable from anywhere (the Chrome extension checks it before choosing a server). It holds
+    // no secrets or user data.
+    { headers: { "Cache-Control": "no-store", "Access-Control-Allow-Origin": "*" } },
   );
 }

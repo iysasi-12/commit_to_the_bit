@@ -25,22 +25,28 @@ const startHint = document.getElementById("start-hint");
 let lastRequestAt = 0;
 let appUrl = null;
 
-async function reachable(url) {
+/**
+ * True only when the app itself is working: /api/health must answer {"ok": true}. A server that
+ * is up but shows an error page (e.g. the app crashed behind Caddy) counts as down, so Automatic
+ * mode moves on to this computer.
+ */
+async function healthy(url) {
   try {
-    // no-cors: we only need to know the server answers, not read the page.
-    await fetch(url, { method: "HEAD", mode: "no-cors", cache: "no-store", signal: AbortSignal.timeout(TIMEOUT_MS) });
-    return true;
+    const res = await fetch(`${url}api/health`, { cache: "no-store", signal: AbortSignal.timeout(TIMEOUT_MS) });
+    if (!res.ok) return false;
+    const body = await res.json();
+    return body?.ok === true;
   } catch {
     return false;
   }
 }
 
-/** The first server in the chosen mode that answers, or null. */
+/** The first server in the chosen mode whose app is healthy, or null. */
 async function pickServer() {
   const { viaServer } = await chrome.storage.sync.get("viaServer");
   const order = TRY_ORDER[viaServer] ?? TRY_ORDER.auto;
   for (const url of order) {
-    if (await reachable(url)) return { url, order };
+    if (await healthy(url)) return { url, order };
   }
   return { url: null, order };
 }

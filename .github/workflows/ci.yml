@@ -234,6 +234,12 @@ jobs:
             IdentitiesOnly yes
           EOF
 
+      - name: Remember the version running now (for automatic rollback)
+        run: |
+          prev="$(ssh vultr "grep -s '^APP_IMAGE=' /opt/voice-inbox/.env | cut -d= -f2-" || true)"
+          echo "PREVIOUS_IMAGE=${prev}" >> "$GITHUB_ENV"
+          echo "Running now: ${prev:-nothing yet (first deploy)}"
+
       - name: Write server .env
         env:
           AUTH_SECRET: ${{ secrets.AUTH_SECRET }}
@@ -295,6 +301,39 @@ jobs:
             sleep 5
           done
           echo "::error::https://${DOMAIN}/api/health did not report commit $GITHUB_SHA (last: ${commit:-no answer})"
+          ssh vultr 'cd /opt/voice-inbox && docker compose ps && docker compose logs --tail=80'
+          exit 1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: voice-inbox-assistant/package-lock.json
+
+      - name: Full live test suite against the deployed site (3 rounds)
+        working-directory: voice-inbox-assistant
+        env:
+          # Signs in as fake test users (placeholder Google tokens, no Gmail access, no credits).
+          CHECK_AUTH_SECRET: ${{ secrets.AUTH_SECRET }}
+        run: |
+          npm ci
+          npm run check:live -- "https://${DOMAIN}" 3 "$GITHUB_SHA"
+
+      - name: Roll back to the previous version if any check failed
+        if: failure() && env.PREVIOUS_IMAGE != ''
+        run: |
+          echo "::warning::This deploy failed its checks; putting ${PREVIOUS_IMAGE} back."
+          ssh vultr "cd /opt/voice-inbox && sed -i 's|^APP_IMAGE=.*|APP_IMAGE=${PREVIOUS_IMAGE}|' .env && docker compose up -d app"
+          prev_commit="${PREVIOUS_IMAGE##*:}"
+          for i in $(seq 1 30); do
+            commit="$(curl -fsS "https://${DOMAIN}/api/health" 2>/dev/null | jq -r .commit || true)"
+            if [ "$commit" = "$prev_commit" ]; then
+              echo "Rolled back: https://${DOMAIN} runs ${prev_commit} again. This run stays red so the failure gets fixed."
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::The rollback didn't come back healthy either"
           ssh vultr 'cd /opt/voice-inbox && docker compose ps && docker compose logs --tail=80'
           exit 1
 

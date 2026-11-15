@@ -2,6 +2,7 @@ import Link from "next/link";
 import { auth } from "@/auth";
 import { signInWithGoogle } from "@/app/actions";
 import { Dashboard } from "@/components/Dashboard";
+import { SignInWatcher } from "@/components/SignInWatcher";
 
 export default async function Home() {
   const session = await auth();
@@ -23,8 +24,9 @@ export default async function Home() {
           <a href="/" target="_blank" rel="noreferrer" className="font-semibold text-indigo-300 underline">
             Sign in in a new tab
           </a>
-          , then close that tab and reopen the side panel.
+          , then come back here. This panel updates by itself once you&apos;re signed in.
         </p>
+        <SignInWatcher />
         <p className="mt-6 text-sm text-slate-400">
           Read-only Gmail access. Email text is sent to Google Gemini to write the summaries, and summary text is sent to ElevenLabs to speak them. Nothing is stored on the
           server.{" "}

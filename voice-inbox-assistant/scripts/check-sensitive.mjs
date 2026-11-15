@@ -1,4 +1,5 @@
-// End-to-end proof that sensitive emails are never read, summarized, shown or spoken.
+// End-to-end proof that sensitive emails are never read, summarized, shown or spoken, and that
+// the "last 8 / 16 / 48 hours" windows return exactly the right emails.
 //   npm run check:sensitive -- http://localhost:3300
 //
 // It starts a fake Gmail and a fake Gemini on this computer (port 4010) and scans through the
@@ -52,14 +53,19 @@ const NORMAL = [
   ["Uber Eats <uber@uber.com>", "Your order is confirmed", "Finally, Transactions. Your Uber Eats order is confirmed."],
 ];
 const SECRETS = ["SECRET-MARKER", "4417-1234-5678-9113", "$4,213.55", "acute bronchitis", "SSN 123-45-6789", "PIN 9341"];
+// Each email has an age in hours, so the 8/16/48-hour windows can be checked too.
+const SENSITIVE_AGES = [1, 5, 12, 20, 30, 60];
+const NORMAL_AGES = [2, 6, 10, 15, 30, 40, 70];
+const NOW = Date.now();
 const inbox = [
-  ...SENSITIVE.map(([from, subject], i) => ({ id: `sens${i}`, from, subject, body: `SECRET-MARKER ${i}. Account 4417-1234-5678-9113, balance $4,213.55. Diagnosis: acute bronchitis. SSN 123-45-6789. PIN 9341.` })),
-  ...NORMAL.map(([from, subject, summary], i) => ({ id: `norm${i}`, from, subject, body: `Hello, this is an ordinary email number ${i}.`, summary })),
+  ...SENSITIVE.map(([from, subject], i) => ({ id: `sens${i}`, from, subject, ageH: SENSITIVE_AGES[i % SENSITIVE_AGES.length], body: `SECRET-MARKER ${i}. Account 4417-1234-5678-9113, balance $4,213.55. Diagnosis: acute bronchitis. SSN 123-45-6789. PIN 9341.` })),
+  ...NORMAL.map(([from, subject, summary], i) => ({ id: `norm${i}`, from, subject, ageH: NORMAL_AGES[i], body: `Hello, this is an ordinary email number ${i}.`, summary })),
 ];
-// Interleave, like a real inbox.
-inbox.sort((a, b) => (a.id.charCodeAt(4) * 7 + a.id.length) % 5 - (b.id.charCodeAt(4) * 7 + b.id.length) % 5);
+// Newest first, like a real inbox.
+inbox.sort((a, b) => a.ageH - b.ageH);
+const sentAt = (e) => NOW - e.ageH * 3_600_000;
 
-const log = { gmail: [], geminiBodies: [], badAuth: 0 };
+const log = { gmail: [], geminiBodies: [], badAuth: 0, queries: [] };
 const json = (res, status, obj) => {
   res.writeHead(status, { "Content-Type": "application/json" });
   res.end(JSON.stringify(obj));
@@ -74,7 +80,12 @@ const server = createServer(async (req, res) => {
     const id = url.pathname.split("/messages/")[1];
     if (!id) {
       const n = Number(url.searchParams.get("maxResults") ?? 10);
-      return json(res, 200, { messages: inbox.slice(0, n).map((e) => ({ id: e.id, threadId: e.id })), resultSizeEstimate: n });
+      // Like Gmail search: "after:<unix seconds>" keeps only emails sent after that moment.
+      const q = url.searchParams.get("q");
+      log.queries.push(q);
+      const after = Number(q?.match(/^after:(\d+)$/)?.[1] ?? 0) * 1000;
+      const listed = inbox.filter((e) => sentAt(e) > after).slice(0, n);
+      return json(res, 200, { messages: listed.map((e) => ({ id: e.id, threadId: e.id })), resultSizeEstimate: listed.length });
     }
     const email = inbox.find((e) => e.id === decodeURIComponent(id));
     if (!email) return json(res, 404, { error: { code: 404, message: "Not found" } });
@@ -139,7 +150,49 @@ try {
   const note = queue.at(-1);
   check("the sensitive note comes last and only gives counts", note?.id === "sensitive-notice" && /^One more thing\. I skipped seventeen sensitive emails: /.test(note?.summary ?? ""), note?.summary?.slice(0, 120));
   check("the 7 ordinary emails are all summarized", queue.filter((q) => q.group !== "skipped").length === NORMAL.length, `${queue.length - 1} summaries`);
-  check("stats count the skipped emails by kind only", data?.stats?.sensitive === 17 && JSON.stringify(data?.stats?.sensitiveByKind) === JSON.stringify({ financial: 5, medical: 4, government: 3, security: 5 }), JSON.stringify(data?.stats?.sensitiveByKind));
+  const byKind = data?.stats?.sensitiveByKind ?? {};
+  const expectedKinds = { financial: 5, medical: 4, government: 3, security: 5 };
+  check(
+    "stats count the skipped emails by kind only",
+    data?.stats?.sensitive === 17 && Object.keys(byKind).length === 4 && Object.entries(expectedKinds).every(([k, n]) => byKind[k] === n),
+    JSON.stringify(byKind),
+  );
+  check("with no time window, Gmail is asked for the newest emails (no cutoff)", log.queries[0] === null, `query ${log.queries[0]}`);
+
+  // ---- Time windows: last 8, 16 and 48 hours ----
+  for (const hours of [8, 16, 48]) {
+    const before = { queries: log.queries.length, full: log.gmail.filter((r) => r.format === "full").length, ai: log.geminiBodies.length };
+    const r = await fetch(`${base}/api/emails`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", cookie: `authjs.session-token=${session}` },
+      body: JSON.stringify({ count: 50, hours, length: "short", persona: "standard" }),
+      signal: AbortSignal.timeout(120000),
+    });
+    const d = await r.json().catch(() => null);
+    const q = log.queries[before.queries] ?? "";
+    const cutoff = Number(q.match(/^after:(\d+)$/)?.[1] ?? 0) * 1000;
+    const expectedCutoff = Date.now() - hours * 3_600_000;
+    const inWindow = inbox.filter((e) => e.ageH < hours);
+    const normalIn = inWindow.filter((e) => e.id.startsWith("norm"));
+    const sensitiveIn = inWindow.filter((e) => e.id.startsWith("sens"));
+    const summarized = (d?.queue ?? []).filter((x) => x.group !== "skipped");
+    const fullNow = log.gmail.filter((x) => x.format === "full").slice(before.full).map((x) => x.id);
+    const leaked = [...SECRETS, ...SENSITIVE.flatMap(([f, s]) => [f, s])].filter((x) => JSON.stringify(d ?? {}).includes(x) || log.geminiBodies.slice(before.ai).join("\n").includes(x));
+    check(
+      `last ${hours} hours: Gmail is asked only for emails after the right moment`,
+      Math.abs(cutoff - expectedCutoff) < 120_000,
+      q ? `${q} = ${new Date(cutoff).toISOString()}` : "no cutoff sent",
+    );
+    check(
+      `last ${hours} hours: exactly the ${normalIn.length} ordinary + ${sensitiveIn.length} sensitive emails from that window`,
+      r.status === 200 && d?.stats?.fetched === inWindow.length && summarized.length === normalIn.length && d?.stats?.sensitive === sensitiveIn.length && d?.stats?.hours === hours,
+      `${r.status}: checked ${d?.stats?.fetched}, summarized ${summarized.length}, sensitive ${d?.stats?.sensitive}`,
+    );
+    check(`last ${hours} hours: still nothing sensitive downloaded, sent to the AI or shown`, fullNow.every((id) => id.startsWith("norm")) && leaked.length === 0, leaked.join("; ") || `${fullNow.length} ordinary emails downloaded`);
+  }
+  // Anything other than 8/16/48 is ignored (no cutoff), never an error.
+  const odd = await fetch(`${base}/api/emails`, { method: "POST", headers: { "Content-Type": "application/json", cookie: `authjs.session-token=${session}` }, body: JSON.stringify({ count: 5, hours: 24 }), signal: AbortSignal.timeout(120000) });
+  check("an unsupported window (24 hours) falls back to newest emails", odd.status === 200 && log.queries.at(-1) === null, `${odd.status}, query ${log.queries.at(-1)}`);
 } catch (err) {
   check("test ran", false, err?.message ?? String(err));
 } finally {
