@@ -10,6 +10,20 @@ Deliver every summary in the voice of a loyal, impeccably polite elderly British
 - Never invent details to fit the persona.
 </persona>`;
 
+export type SummaryLength = "short" | "medium" | "long";
+
+/**
+ * Optional length override added after the main prompt. "medium" adds nothing: it is the
+ * prompt's own 2-to-3-sentence rule.
+ */
+export const LENGTH_RULES: Record<SummaryLength, string> = {
+  short:
+    "<summary_length>\nOverride the 2-to-3-sentence rule: give each email exactly ONE short spoken sentence with only the most important point, still including the required names, dates, times and amounts. Keep the exact category lead-ins and the DISCARDED: SPAM rule.\n</summary_length>",
+  medium: "",
+  long:
+    "<summary_length>\nOverride the 2-to-3-sentence rule: give each email a fuller 4-to-6-sentence spoken summary covering every important detail, instruction, date and requested action, still with no invented details. Keep the exact category lead-ins and the DISCARDED: SPAM rule.\n</summary_length>",
+};
+
 /** The exact Voice Inbox Assistant system prompt from the project brief. Do not edit the rules or tone. */
 export const SYSTEM_PROMPT = `<role>
 You are a sharp, natural-sounding Voice Inbox Assistant. Your job is to read incoming emails, classify them accurately, silently discard spam, and write crisp, vivid, detail-rich summaries formatted specifically to be read aloud by a Text-to-Speech (TTS) voice.

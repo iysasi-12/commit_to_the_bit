@@ -10,13 +10,14 @@ export const maxDuration = 120;
 /** POST { count } → reads the newest emails, summarizes each with Gemini, drops spam, and returns the ordered queue. */
 export async function POST(req: Request) {
   try {
-    const body = (await req.json().catch(() => ({}))) as { count?: unknown; persona?: unknown };
+    const body = (await req.json().catch(() => ({}))) as { count?: unknown; persona?: unknown; length?: unknown };
     const persona = body.persona === "butler" ? "butler" : "standard";
+    const length = body.length === "short" || body.length === "long" ? body.length : "medium";
     const count = Number(body.count ?? 10);
     if (!Number.isInteger(count) || count < 1 || count > 50) throw new ApiError(400, "BAD_COUNT", "Choose between 1 and 50 emails.");
     const accessToken = await requireGoogleAccessToken(req);
     const emails = await fetchRecentEmails(accessToken, count);
-    const results = await summarizeAll(emails, persona);
+    const results = await summarizeAll(emails, { persona, length });
     const failed = results.filter((r) => r.output === null);
     if (emails.length > 0 && failed.length === emails.length) {
       throw new ApiError(503, "GEMINI_FAILED", failed[0]?.error ?? "Gemini couldn't summarize any emails. Please try again.");

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { reconnectGoogle, signOutAction } from "@/app/actions";
 import { VoiceBox } from "@/components/VoiceBox";
+import type { SummaryLength } from "@/lib/system-prompt";
 import { DEFAULT_VOICE, readError, storageGet, storageSet, type ActiveVoice, type QueueItem } from "@/components/types";
 
 type Group = QueueItem["group"];
@@ -24,6 +25,12 @@ export function Dashboard({ name, email, sessionExpired }: { name: string; email
   const [expired, setExpired] = useState(sessionExpired);
   const [count, setCount] = useState(10);
   const [butler, setButler] = useState(false);
+  const [length, setLength] = useState<SummaryLength>("medium");
+  // Default: read every summary back to back. Off: stop after each email and wait for Next.
+  const [continuous, setContinuous] = useState(true);
+  const voiceRef = useRef<ActiveVoice>(DEFAULT_VOICE);
+  voiceRef.current = voice;
+  const autoStarted = useRef(false);
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
   const [stats, setStats] = useState<{ fetched: number; spam: number; failed: number } | null>(null);
@@ -39,8 +46,26 @@ export function Dashboard({ name, email, sessionExpired }: { name: string; email
 
   useEffect(() => {
     const saved = storageGet<ActiveVoice | null>("via.voice", null);
-    if (saved?.id) setVoice(saved);
+    if (saved?.id) {
+      setVoice(saved);
+      voiceRef.current = saved;
+    }
     setButler(storageGet<boolean>("via.butler", false));
+    setContinuous(storageGet<boolean>("via.continuous", true));
+    const savedLength = storageGet<SummaryLength>("via.length", "medium");
+    // Opened from the Gmail button: ?length=short|medium|long&autostart=1
+    const params = new URLSearchParams(window.location.search);
+    const fromUrl = params.get("length");
+    const chosen: SummaryLength = fromUrl === "short" || fromUrl === "medium" || fromUrl === "long" ? fromUrl : savedLength;
+    setLength(chosen);
+    if (fromUrl) storageSet("via.length", chosen);
+    if (params.get("autostart") === "1" && !autoStarted.current) {
+      autoStarted.current = true;
+      // Drop the params so a page refresh doesn't start another scan.
+      window.history.replaceState(null, "", window.location.pathname);
+      void scan(chosen);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const selectVoice = useCallback((v: ActiveVoice) => {
@@ -60,17 +85,18 @@ export function Dashboard({ name, email, sessionExpired }: { name: string; email
       if (!el) return;
       el.pause();
       setPlayError(null);
-      if (!voice.id) {
+      const voiceId = voiceRef.current.id;
+      if (!voiceId) {
         setStatus("error");
         setPlayError("Pick a voice in the Voice Box first.");
         return;
       }
-      const key = `${item.id}-${voice.id}`;
+      const key = `${item.id}-${voiceId}`;
       let url = cache.current.get(key);
       if (!url) {
         setStatus("loading");
         try {
-          const res = await fetch("/api/tts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: item.summary, voiceId: voice.id }) });
+          const res = await fetch("/api/tts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: item.summary, voiceId }) });
           if (!res.ok) {
             const { message, code } = await readError(res);
             onAuthError(code);
@@ -100,10 +126,11 @@ export function Dashboard({ name, email, sessionExpired }: { name: string; email
         setStatus("paused");
       }
     },
-    [voice.id, onAuthError],
+    [onAuthError],
   );
 
-  async function scan() {
+  async function scan(lengthOverride?: SummaryLength) {
+    const summaryLength = lengthOverride ?? length;
     setScanning(true);
     setScanError(null);
     setStats(null);
@@ -122,7 +149,8 @@ export function Dashboard({ name, email, sessionExpired }: { name: string; email
         setExpired(true);
         return;
       }
-      const res = await fetch("/api/emails", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ count, persona: butler ? "butler" : "standard" }) });
+      const res = await fetch("/api/emails", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ count, length: summaryLength, persona: storageGet<boolean>("via.butler", butler) ? "butler" : "standard" }),
+      });
       if (!res.ok) {
         const { message, code } = await readError(res);
         onAuthError(code);
@@ -161,6 +189,12 @@ export function Dashboard({ name, email, sessionExpired }: { name: string; email
     setIndex(i);
     void playItem(list[i]!);
   }
+
+  // "Read all at once": when one summary finishes, start the next (audio is still made one email at a time).
+  useEffect(() => {
+    if (status === "ended" && continuous && !atEnd) next();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status]);
 
   function skip() {
     if (atEnd) return;
@@ -231,6 +265,38 @@ export function Dashboard({ name, email, sessionExpired }: { name: string; email
                 </option>
               ))}
             </select>
+          </label>
+          <div className="text-sm font-semibold">
+            Summary length
+            <div className="ml-2 inline-flex rounded-lg border border-slate-600 p-0.5" role="group" aria-label="Summary length">
+              {(["short", "medium", "long"] as SummaryLength[]).map((l) => (
+                <button
+                  key={l}
+                  type="button"
+                  aria-pressed={length === l}
+                  disabled={scanning}
+                  onClick={() => {
+                    setLength(l);
+                    storageSet("via.length", l);
+                  }}
+                  className={`rounded-md px-3 py-1.5 capitalize ${length === l ? "bg-indigo-500 text-white" : "text-slate-300 hover:bg-slate-800"}`}
+                >
+                  {l}
+                </button>
+              ))}
+            </div>
+          </div>
+          <label className="flex items-center gap-2 text-sm font-semibold">
+            <input
+              type="checkbox"
+              className="h-5 w-5 accent-indigo-500"
+              checked={continuous}
+              onChange={(e) => {
+                setContinuous(e.target.checked);
+                storageSet("via.continuous", e.target.checked);
+              }}
+            />
+            Read all at once <span className="font-normal text-slate-400">(off: one email at a time)</span>
           </label>
           <label className="flex items-center gap-2 text-sm font-semibold">
             <input
@@ -303,7 +369,8 @@ export function Dashboard({ name, email, sessionExpired }: { name: string; email
             {status === "loading" && "Generating audio…"}
             {status === "playing" && "Playing"}
             {status === "paused" && "Paused"}
-            {status === "ended" && (atEnd ? "Finished. That was your last email." : "Finished. Click Next Email when you're ready.")}
+            {status === "ended" &&
+              (atEnd ? "Finished. That was your last email." : continuous ? "Moving to the next email…" : "Finished. Click Next Email when you're ready.")}
             {status === "idle" && "Not played yet. Click Listen to hear it."}
             {status === "error" && <span className="text-red-300">{playError}</span>}
           </div>
