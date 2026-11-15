@@ -6,11 +6,8 @@ import { readError, SAMPLE_LINE, storageGet, storageSet, type ActiveVoice, type 
 const DEFAULT_DESIGN_TEXT =
   "Starting with Work and School. For Biology 204 with Doctor Elena Vance, Lab Report 4 on Cellular Respiration is due Monday, November 16th at 11:59 PM. Remember to attach your raw data tables.";
 
-// An original character voice for Butler mode (not modeled on any real actor).
-const BUTLER_DESCRIPTION =
-  "An elderly, distinguished English butler in his seventies with a warm, slightly gravelly, unhurried voice, crisp received pronunciation, and a gentle, dry wit.";
-const BUTLER_PREVIEW_TEXT =
-  "Starting with Work and School, sir. Your biology lab report is due Monday at 11:59 PM, sir, and Doctor Vance asks that you attach your raw data tables. I took the liberty of noting the deadline, sir.";
+/** Choosing this voice also makes the summaries butler-style (see Dashboard). */
+export const BUTLER_NAME = "The Butler";
 
 type Tab = "voices" | "design" | "custom";
 
@@ -144,6 +141,23 @@ export function VoiceBox({ active, onSelect, onAuthError }: Props) {
     }
   }
 
+  /** Adds The Butler to the account the first time (via Voice Design), then uses it like any voice. */
+  async function addButler() {
+    setError(null);
+    setNotice(null);
+    setBusy("butler");
+    try {
+      const res = await fetch("/api/voices/butler", { method: "POST" });
+      if (!res.ok) return void (await fail(res));
+      const json = (await res.json()) as { voice_id: string; name: string };
+      onSelect({ id: json.voice_id, label: json.name });
+      setNotice("The Butler is ready, sir. Summaries will now be read in his voice and style.");
+      await loadVoices();
+    } finally {
+      setBusy(null);
+    }
+  }
+
   function addPasted() {
     const id = idInput.trim();
     if (!/^[A-Za-z0-9_-]{5,64}$/.test(id)) return setError("That doesn't look like an ElevenLabs voice ID.");
@@ -248,6 +262,17 @@ export function VoiceBox({ active, onSelect, onAuthError }: Props) {
       {tab === "voices" && (
         <div className="mt-4 space-y-5">
           {loading && <p className="text-slate-400">Loading voices…</p>}
+          {!loading && !custom.some((v) => v.name === BUTLER_NAME) && (
+            <div className="flex items-center gap-3 rounded-lg border border-slate-700 px-3 py-2">
+              <div className="min-w-0 flex-1">
+                <div className="font-semibold">🎩 {BUTLER_NAME}</div>
+                <div className="truncate text-xs text-slate-400">A refined elderly British butler who calls you &ldquo;sir&rdquo;. Created in your ElevenLabs account the first time.</div>
+              </div>
+              <button className={primary} onClick={() => void addButler()} disabled={busy === "butler"}>
+                {busy === "butler" ? "Creating…" : "Add & Use"}
+              </button>
+            </div>
+          )}
           {!loading && custom.length > 0 && (
             <div>
               <h3 className="mb-2 text-sm font-bold uppercase tracking-wide text-slate-400">Saved custom voices</h3>
@@ -290,16 +315,6 @@ export function VoiceBox({ active, onSelect, onAuthError }: Props) {
 
       {tab === "design" && (
         <div className="mt-4 space-y-3">
-          <button
-            className={ghost}
-            onClick={() => {
-              setDescription(BUTLER_DESCRIPTION);
-              setDesignText(BUTLER_PREVIEW_TEXT);
-              setSaveNames({});
-            }}
-          >
-            🎩 Fill in the Butler voice
-          </button>
           <label className="block text-sm font-semibold">
             Voice description <span className="font-normal text-slate-400">({description.trim().length}/1000, at least 20)</span>
             <textarea

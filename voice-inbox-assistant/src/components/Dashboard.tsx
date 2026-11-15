@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { reconnectGoogle, signOutAction } from "@/app/actions";
-import { VoiceBox } from "@/components/VoiceBox";
+import { BUTLER_NAME, VoiceBox } from "@/components/VoiceBox";
 import type { SummaryLength } from "@/lib/system-prompt";
 import { DEFAULT_VOICE, readError, storageGet, storageSet, type ActiveVoice, type QueueItem } from "@/components/types";
 
@@ -24,7 +24,6 @@ export function Dashboard({ name, email, sessionExpired }: { name: string; email
   const [voice, setVoice] = useState<ActiveVoice>(DEFAULT_VOICE);
   const [expired, setExpired] = useState(sessionExpired);
   const [count, setCount] = useState(10);
-  const [butler, setButler] = useState(false);
   const [length, setLength] = useState<SummaryLength>("medium");
   // Default: read every summary back to back. Off: stop after each email and wait for Next.
   const [continuous, setContinuous] = useState(true);
@@ -50,7 +49,6 @@ export function Dashboard({ name, email, sessionExpired }: { name: string; email
       setVoice(saved);
       voiceRef.current = saved;
     }
-    setButler(storageGet<boolean>("via.butler", false));
     setContinuous(storageGet<boolean>("via.continuous", true));
     const savedLength = storageGet<SummaryLength>("via.length", "medium");
     // Opened from the Gmail button: ?length=short|medium|long&autostart=1
@@ -149,7 +147,8 @@ export function Dashboard({ name, email, sessionExpired }: { name: string; email
         setExpired(true);
         return;
       }
-      const res = await fetch("/api/emails", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ count, length: summaryLength, persona: storageGet<boolean>("via.butler", butler) ? "butler" : "standard" }),
+      const res = await fetch("/api/emails", { method: "POST", headers: { "Content-Type": "application/json" }, // The Butler voice also brings the butler's way of speaking.
+        body: JSON.stringify({ count, length: summaryLength, persona: voiceRef.current.label === BUTLER_NAME ? "butler" : "standard" }),
       });
       if (!res.ok) {
         const { message, code } = await readError(res);
@@ -297,19 +296,6 @@ export function Dashboard({ name, email, sessionExpired }: { name: string; email
               }}
             />
             Read all at once <span className="font-normal text-slate-400">(off: one email at a time)</span>
-          </label>
-          <label className="flex items-center gap-2 text-sm font-semibold">
-            <input
-              type="checkbox"
-              className="h-5 w-5 accent-indigo-500"
-              checked={butler}
-              disabled={scanning}
-              onChange={(e) => {
-                setButler(e.target.checked);
-                storageSet("via.butler", e.target.checked);
-              }}
-            />
-            Butler mode <span className="font-normal text-slate-400">(a refined British butler who calls you &ldquo;sir&rdquo;)</span>
           </label>
           <button className={`${btn} bg-indigo-500 text-white hover:bg-indigo-400`} onClick={() => void scan()} disabled={scanning || expired}>
             {scanning ? "Reading and summarizing…" : "Scan & Summarize Inbox"}

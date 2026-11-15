@@ -1,5 +1,5 @@
 import { ApiError, errorResponse } from "@/lib/errors";
-import { eleven, OUTPUT_FORMAT, TTS_MODEL, validVoiceId } from "@/lib/elevenlabs";
+import { eleven, OUTPUT_FORMAT, TTS_MODEL, validVoiceId, VOICE_SETTINGS } from "@/lib/elevenlabs";
 import { requireSignedIn } from "@/lib/server-auth";
 
 
@@ -15,7 +15,7 @@ export async function POST(req: Request) {
     const res = await eleven(`/v1/text-to-speech/${encodeURIComponent(voiceId)}?output_format=${OUTPUT_FORMAT}`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Accept: "audio/mpeg" },
-      body: JSON.stringify({ text, model_id: TTS_MODEL }),
+      body: JSON.stringify({ text, model_id: TTS_MODEL, voice_settings: VOICE_SETTINGS }),
     });
     const audio = await res.arrayBuffer();
     return new Response(audio, { headers: { "Content-Type": "audio/mpeg", "Cache-Control": "private, no-store" } });

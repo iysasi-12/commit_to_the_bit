@@ -30,15 +30,20 @@ async function load(request) {
   }
 }
 
-// A request made in the last 30 seconds (the click that opened this panel) starts a scan.
-chrome.storage.session.get("viaRequest").then(({ viaRequest }) => {
-  const fresh = viaRequest && Date.now() - viaRequest.at < 30_000 ? viaRequest : null;
-  void load(fresh);
-});
+// Each length pick in Gmail is used exactly once, then removed, so reopening the panel,
+// refreshing Gmail or using the toolbar icon never starts a scan by itself.
+async function takeRequest() {
+  const { viaRequest } = await chrome.storage.session.get("viaRequest");
+  if (!viaRequest) return null;
+  await chrome.storage.session.remove("viaRequest");
+  return Date.now() - viaRequest.at < 10_000 ? viaRequest : null;
+}
 
-// Clicking the Gmail button again while the panel is open starts a new scan.
+void takeRequest().then((request) => load(request));
+
+// Picking a length again while the panel is open starts a new scan.
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === "session" && changes.viaRequest?.newValue) void load(changes.viaRequest.newValue);
+  if (area === "session" && changes.viaRequest?.newValue) void takeRequest().then((request) => request && load(request));
 });
 
 document.getElementById("retry").addEventListener("click", () => {
