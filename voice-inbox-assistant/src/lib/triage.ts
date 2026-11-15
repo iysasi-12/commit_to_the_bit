@@ -23,7 +23,7 @@ const LEAD_IN_PATTERNS: Array<[Category, RegExp]> = [
 ];
 
 /** Finer tab used in the UI: the prompt's Work/School category is split into Work and School. */
-export type Group = "work" | "school" | "personal" | "transactions";
+export type Group = "work" | "school" | "personal" | "transactions" | "skipped";
 
 const SCHOOL_HINTS =
   /\.edu\b|canvas|blackboard|moodle|instructure|professor|\bprof\b|instructor|\bTA\b|teaching assistant|\bclass\b|course|lecture|assignment|homework|exam|quiz|midterm|syllabus|grade|lab report|semester|campus|university|college|school|student|tuition|registrar/i;

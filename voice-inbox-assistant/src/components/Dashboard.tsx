@@ -7,10 +7,19 @@ import type { SummaryLength } from "@/lib/system-prompt";
 import { DEFAULT_VOICE, readError, storageGet, storageSet, type ActiveVoice, type QueueItem } from "@/components/types";
 
 type Group = QueueItem["group"];
+
+interface ScanStats {
+  fetched: number;
+  spam: number;
+  failed: number;
+  sensitive: number;
+  sensitiveByKind: Record<string, number | undefined>;
+}
 type TabId = "all" | Group;
 
-const GROUP_LABEL: Record<Group, string> = { work: "Work", school: "School", personal: "Personal", transactions: "Transactions" };
+const GROUP_LABEL: Record<Group, string> = { work: "Work", school: "School", personal: "Personal", transactions: "Transactions", skipped: "Sensitive (not read)" };
 const GROUP_STYLE: Record<Group, string> = {
+  skipped: "bg-rose-500/20 text-rose-300",
   work: "bg-sky-500/20 text-sky-300",
   school: "bg-violet-500/20 text-violet-300",
   personal: "bg-amber-500/20 text-amber-300",
@@ -32,7 +41,7 @@ export function Dashboard({ name, email, sessionExpired }: { name: string; email
   const autoStarted = useRef(false);
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
-  const [stats, setStats] = useState<{ fetched: number; spam: number; failed: number } | null>(null);
+  const [stats, setStats] = useState<ScanStats | null>(null);
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [tab, setTab] = useState<TabId>("all");
   const [index, setIndex] = useState(0);
@@ -160,7 +169,7 @@ export function Dashboard({ name, email, sessionExpired }: { name: string; email
         setScanError(message);
         return;
       }
-      const json = (await res.json()) as { queue: QueueItem[]; stats: { fetched: number; spam: number; failed: number } };
+      const json = (await res.json()) as { queue: QueueItem[]; stats: ScanStats };
       setQueue(json.queue);
       setStats(json.stats);
       if (json.queue[0]) void playItem(json.queue[0]);
@@ -312,7 +321,18 @@ export function Dashboard({ name, email, sessionExpired }: { name: string; email
         )}
         {stats && (
           <p className="mt-3 text-sm text-slate-400">
-            Read {stats.fetched} emails · {queue.length} to hear · {stats.spam} spam skipped{stats.failed ? ` · ${stats.failed} couldn't be summarized` : ""}
+            Checked {stats.fetched} emails · {queue.filter((q) => q.group !== "skipped").length} to hear · {stats.spam} spam skipped
+            {stats.failed ? ` · ${stats.failed} couldn't be summarized` : ""}
+            {stats.sensitive > 0 && (
+              <span className="ml-1 font-semibold text-rose-300">
+                · 🔒 {stats.sensitive} sensitive {stats.sensitive === 1 ? "email" : "emails"} not opened (
+                {Object.entries(stats.sensitiveByKind)
+                  .filter(([, n]) => n)
+                  .map(([k, n]) => `${n} ${k}`)
+                  .join(", ")}
+                )
+              </span>
+            )}
           </p>
         )}
       </section>

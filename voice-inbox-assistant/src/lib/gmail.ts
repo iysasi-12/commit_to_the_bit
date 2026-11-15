@@ -3,6 +3,7 @@ import { google, type gmail_v1 } from "googleapis";
 import { convert } from "html-to-text";
 import { ApiError } from "@/lib/errors";
 import { sessionExpired } from "@/lib/server-auth";
+import { sensitiveKind, type SensitiveKind } from "@/lib/sensitive";
 
 export interface ParsedEmail {
   id: string;
@@ -93,16 +94,39 @@ function mapGmailError(err: unknown): ApiError {
   return new ApiError(502, "GMAIL_ERROR", "Couldn't read your Gmail inbox. Please try again.");
 }
 
-/** Reads the newest `count` emails in the inbox (read-only). */
-export async function fetchRecentEmails(accessToken: string, count: number): Promise<ParsedEmail[]> {
+export interface InboxScan {
+  emails: ParsedEmail[];
+  /** How many emails were skipped as sensitive, by kind. Their bodies were never downloaded. */
+  sensitive: Partial<Record<SensitiveKind, number>>;
+  fetched: number;
+}
+
+/**
+ * Reads the newest `count` inbox emails (read-only). Sensitive emails (banking, medical,
+ * government, security codes) are detected from sender + subject only and never opened.
+ */
+export async function fetchRecentEmails(accessToken: string, count: number): Promise<InboxScan> {
   const oauth = new google.auth.OAuth2();
   oauth.setCredentials({ access_token: accessToken });
   const gmail = google.gmail({ version: "v1", auth: oauth });
   try {
     const list = await gmail.users.messages.list({ userId: "me", maxResults: count, labelIds: ["INBOX"] });
     const ids = (list.data.messages ?? []).map((m) => m.id).filter((id): id is string => Boolean(id));
-    const messages = await Promise.all(ids.map((id) => gmail.users.messages.get({ userId: "me", id, format: "full" })));
-    return messages.map((m) => parseMessage(m.data));
+    // Step 1: headers only (sender and subject), no body.
+    const headersOnly = await Promise.all(
+      ids.map((id) => gmail.users.messages.get({ userId: "me", id, format: "metadata", metadataHeaders: ["From", "Subject"] })),
+    );
+    const sensitive: Partial<Record<SensitiveKind, number>> = {};
+    const safeIds: string[] = [];
+    for (const m of headersOnly) {
+      const headers = m.data.payload?.headers ?? undefined;
+      const kind = sensitiveKind(header(headers, "From"), header(headers, "Subject"));
+      if (kind) sensitive[kind] = (sensitive[kind] ?? 0) + 1;
+      else if (m.data.id) safeIds.push(m.data.id);
+    }
+    // Step 2: full content only for emails that aren't sensitive.
+    const messages = await Promise.all(safeIds.map((id) => gmail.users.messages.get({ userId: "me", id, format: "full" })));
+    return { emails: messages.map((m) => parseMessage(m.data)), sensitive, fetched: ids.length };
   } catch (err) {
     throw mapGmailError(err);
   }
