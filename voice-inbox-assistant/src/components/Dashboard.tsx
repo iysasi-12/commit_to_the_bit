@@ -5,12 +5,17 @@ import { reconnectGoogle, signOutAction } from "@/app/actions";
 import { VoiceBox } from "@/components/VoiceBox";
 import { DEFAULT_VOICE, readError, storageGet, storageSet, type ActiveVoice, type QueueItem } from "@/components/types";
 
-const CATEGORY_LABEL: Record<QueueItem["category"], string> = { work: "Work / School", personal: "Personal", transactions: "Transactions" };
-const CATEGORY_STYLE: Record<QueueItem["category"], string> = {
+type Group = QueueItem["group"];
+type TabId = "all" | Group;
+
+const GROUP_LABEL: Record<Group, string> = { work: "Work", school: "School", personal: "Personal", transactions: "Transactions" };
+const GROUP_STYLE: Record<Group, string> = {
   work: "bg-sky-500/20 text-sky-300",
+  school: "bg-violet-500/20 text-violet-300",
   personal: "bg-amber-500/20 text-amber-300",
   transactions: "bg-emerald-500/20 text-emerald-300",
 };
+const TABS: TabId[] = ["all", "work", "school", "personal", "transactions"];
 
 type PlayStatus = "idle" | "loading" | "playing" | "paused" | "ended" | "error";
 
@@ -18,10 +23,12 @@ export function Dashboard({ name, email, sessionExpired }: { name: string; email
   const [voice, setVoice] = useState<ActiveVoice>(DEFAULT_VOICE);
   const [expired, setExpired] = useState(sessionExpired);
   const [count, setCount] = useState(10);
+  const [butler, setButler] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
   const [stats, setStats] = useState<{ fetched: number; spam: number; failed: number } | null>(null);
   const [queue, setQueue] = useState<QueueItem[]>([]);
+  const [tab, setTab] = useState<TabId>("all");
   const [index, setIndex] = useState(0);
   const [status, setStatus] = useState<PlayStatus>("idle");
   const [playError, setPlayError] = useState<string | null>(null);
@@ -33,6 +40,7 @@ export function Dashboard({ name, email, sessionExpired }: { name: string; email
   useEffect(() => {
     const saved = storageGet<ActiveVoice | null>("via.voice", null);
     if (saved?.id) setVoice(saved);
+    setButler(storageGet<boolean>("via.butler", false));
   }, []);
 
   const selectVoice = useCallback((v: ActiveVoice) => {
@@ -100,6 +108,10 @@ export function Dashboard({ name, email, sessionExpired }: { name: string; email
     setScanError(null);
     setStats(null);
     setQueue([]);
+    setTab("all");
+    // New summaries replace the old text, so drop audio made for the previous scan.
+    for (const url of cache.current.values()) URL.revokeObjectURL(url);
+    cache.current.clear();
     setIndex(0);
     setStatus("idle");
     audioRef.current?.pause();
@@ -110,7 +122,7 @@ export function Dashboard({ name, email, sessionExpired }: { name: string; email
         setExpired(true);
         return;
       }
-      const res = await fetch("/api/emails", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ count }) });
+      const res = await fetch("/api/emails", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ count, persona: butler ? "butler" : "standard" }) });
       if (!res.ok) {
         const { message, code } = await readError(res);
         onAuthError(code);
@@ -128,14 +140,26 @@ export function Dashboard({ name, email, sessionExpired }: { name: string; email
     }
   }
 
-  const current = queue[index];
-  const atEnd = index >= queue.length - 1;
+  // The player steps through the emails in the selected tab.
+  const list = tab === "all" ? queue : queue.filter((q) => q.group === tab);
+  const current = list[index];
+  const atEnd = index >= list.length - 1;
+
+  function changeTab(t: TabId) {
+    if (t === tab) return;
+    playToken.current++;
+    audioRef.current?.pause();
+    setTab(t);
+    setIndex(0);
+    setStatus("idle");
+    setPlayError(null);
+  }
 
   function next() {
     if (atEnd) return;
     const i = index + 1;
     setIndex(i);
-    void playItem(queue[i]!);
+    void playItem(list[i]!);
   }
 
   function skip() {
@@ -208,6 +232,19 @@ export function Dashboard({ name, email, sessionExpired }: { name: string; email
               ))}
             </select>
           </label>
+          <label className="flex items-center gap-2 text-sm font-semibold">
+            <input
+              type="checkbox"
+              className="h-5 w-5 accent-indigo-500"
+              checked={butler}
+              disabled={scanning}
+              onChange={(e) => {
+                setButler(e.target.checked);
+                storageSet("via.butler", e.target.checked);
+              }}
+            />
+            Butler mode <span className="font-normal text-slate-400">(a refined British butler who calls you &ldquo;sir&rdquo;)</span>
+          </label>
           <button className={`${btn} bg-indigo-500 text-white hover:bg-indigo-400`} onClick={() => void scan()} disabled={scanning || expired}>
             {scanning ? "Reading and summarizing…" : "Scan & Summarize Inbox"}
           </button>
@@ -226,13 +263,34 @@ export function Dashboard({ name, email, sessionExpired }: { name: string; email
 
       {stats && queue.length === 0 && <p className="rounded-xl bg-slate-800 px-4 py-3">Nothing to hear: every email was spam or couldn&apos;t be summarized.</p>}
 
+      {queue.length > 0 && (
+        <nav className="flex flex-wrap gap-2" role="tablist" aria-label="Email categories">
+          {TABS.map((t) => {
+            const n = t === "all" ? queue.length : queue.filter((q) => q.group === t).length;
+            return (
+              <button
+                key={t}
+                role="tab"
+                aria-selected={tab === t}
+                onClick={() => changeTab(t)}
+                className={`rounded-full px-4 py-2 text-sm font-semibold ${tab === t ? "bg-indigo-500 text-white" : "border border-slate-600 text-slate-200 hover:bg-slate-800"}`}
+              >
+                {t === "all" ? "All" : GROUP_LABEL[t]} <span className="opacity-70">({n})</span>
+              </button>
+            );
+          })}
+        </nav>
+      )}
+
+      {queue.length > 0 && list.length === 0 && <p className="rounded-xl bg-slate-800 px-4 py-3">No {GROUP_LABEL[tab as Group]} emails in this scan.</p>}
+
       {current && (
         <section className="rounded-2xl border border-indigo-400/40 bg-slate-900 p-6 shadow-xl" aria-labelledby="player-h" aria-live="polite">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h2 id="player-h" className="text-lg font-bold">
-              Email {index + 1} of {queue.length}
+              {tab === "all" ? "Email" : `${GROUP_LABEL[tab]} email`} {index + 1} of {list.length}
             </h2>
-            <span className={`rounded-full px-3 py-1 text-sm font-semibold ${CATEGORY_STYLE[current.category]}`}>{CATEGORY_LABEL[current.category]}</span>
+            <span className={`rounded-full px-3 py-1 text-sm font-semibold ${GROUP_STYLE[current.group]}`}>{GROUP_LABEL[current.group]}</span>
           </div>
           <div className="mt-3 text-sm text-slate-400">
             <div className="truncate">From: {current.from}</div>

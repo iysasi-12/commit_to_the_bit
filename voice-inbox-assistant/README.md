@@ -29,6 +29,25 @@ Sign in with Google, click **Scan & Summarize Inbox**, and hear your newest emai
    - Google tokens live in the encrypted, HttpOnly Auth.js cookie and are refreshed automatically.
    - If Google refuses a refresh (access revoked, or the 7-day limit for apps in Testing mode), the page shows **"Session Expired — Sign Out & Reconnect Google"** instead of crashing.
 
+## Extras
+
+- **Category tabs**: after a scan, tabs for **All · Work · School · Personal · Transactions** let you play through just one group. Gemini's Work/School category is split into Work and School by simple clues: `.edu` senders, Canvas or Blackboard, professors, classes, assignments and exams count as School.
+- **Butler mode**: a checkbox next to the scan button.
+  - Summaries are delivered by an original, refined elderly British butler who addresses you as "sir". The exact system prompt is unchanged; the persona is added after it only when the box is ticked.
+  - In the Voice Box under **Design a voice**, **🎩 Fill in the Butler voice** pre-fills a matching voice description. Generate previews, then **Save & Use Voice**.
+
+## Chrome extension: use it on the Gmail page (your machine only)
+
+The `chrome-extension/` folder adds a **🎧 AI Summary** button to Gmail. It opens the app in Chrome's side panel next to your email. The app itself must be running on http://localhost:3000.
+
+1. Start the app with `npm.cmd run dev`, as below.
+2. In Chrome, go to `chrome://extensions` and turn on **Developer mode** (top right).
+3. Click **Load unpacked** and choose the `voice-inbox-assistant\chrome-extension` folder.
+4. Open http://localhost:3000 in a normal tab and **sign in with Google** once. Google won't show its sign-in page inside a side panel.
+5. Open Gmail and click **🎧 AI Summary** (bottom right), or click the extension's toolbar icon. The side panel opens with your Voice Box, scan button, tabs and player.
+
+If the panel says you're signed out, Chrome may be blocking third-party cookies. Go to **Settings → Privacy and security → Third-party cookies → Sites allowed to use third-party cookies** and add `localhost`, or simply use http://localhost:3000 in a tab.
+
 ## Run it locally
 
 Requires Node.js 20.9+ (tested on Node 24).

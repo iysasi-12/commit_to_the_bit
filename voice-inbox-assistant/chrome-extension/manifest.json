@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "Voice Inbox Assistant",
+  "version": "0.1.0",
+  "description": "Adds an AI Summary button to Gmail that opens Voice Inbox Assistant in Chrome's side panel.",
+  "permissions": ["sidePanel"],
+  "host_permissions": ["http://localhost:3000/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "side_panel": {
+    "default_path": "panel.html"
+  },
+  "action": {
+    "default_title": "Open Voice Inbox Assistant"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://mail.google.com/*"],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    }
+  ]
+}

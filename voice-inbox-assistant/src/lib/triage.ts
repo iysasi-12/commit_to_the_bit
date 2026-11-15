@@ -22,11 +22,23 @@ const LEAD_IN_PATTERNS: Array<[Category, RegExp]> = [
   ["transactions", /^\s*finally,?\s*transactions?\.?\s*/i],
 ];
 
+/** Finer tab used in the UI: the prompt's Work/School category is split into Work and School. */
+export type Group = "work" | "school" | "personal" | "transactions";
+
+const SCHOOL_HINTS =
+  /\.edu\b|canvas|blackboard|moodle|instructure|professor|\bprof\b|instructor|\bTA\b|teaching assistant|\bclass\b|course|lecture|assignment|homework|exam|quiz|midterm|syllabus|grade|lab report|semester|campus|university|college|school|student|tuition|registrar/i;
+
+/** Splits Work/School into School (classes, professors, .edu, learning platforms) or Work. */
+export function workOrSchool(from: string, subject: string, summary: string): "work" | "school" {
+  return SCHOOL_HINTS.test(`${from} ${subject} ${summary}`) ? "school" : "work";
+}
+
 export interface QueueItem {
   id: string;
   from: string;
   subject: string;
   category: Category;
+  group: Group;
   /** Text spoken for this email (the first email of each category keeps its lead-in). */
   summary: string;
 }
@@ -63,7 +75,7 @@ export function detectCategory(output: string): { category: Category; body: stri
  * a group), and keeps a spoken lead-in only on the first email of each group.
  */
 export function buildQueue(results: Array<{ id: string; from: string; subject: string; output: string }>): QueueItem[] {
-  const grouped: Record<Category, Array<Omit<QueueItem, "summary"> & { body: string }>> = { work: [], personal: [], transactions: [] };
+  const grouped: Record<Category, Array<Omit<QueueItem, "summary" | "group"> & { body: string }>> = { work: [], personal: [], transactions: [] };
   for (const r of results) {
     const text = cleanForSpeech(r.output);
     if (!text || isSpam(text)) continue;
@@ -79,6 +91,7 @@ export function buildQueue(results: Array<{ id: string; from: string; subject: s
         from: item.from,
         subject: item.subject,
         category,
+        group: category === "work" ? workOrSchool(item.from, item.subject, item.body) : category,
         summary: i === 0 ? `${LEAD_IN[category]} ${item.body}` : item.body,
       });
     });

@@ -6,6 +6,12 @@ import { readError, SAMPLE_LINE, storageGet, storageSet, type ActiveVoice, type 
 const DEFAULT_DESIGN_TEXT =
   "Starting with Work and School. For Biology 204 with Doctor Elena Vance, Lab Report 4 on Cellular Respiration is due Monday, November 16th at 11:59 PM. Remember to attach your raw data tables.";
 
+// An original character voice for Butler mode (not modeled on any real actor).
+const BUTLER_DESCRIPTION =
+  "An elderly, distinguished English butler in his seventies with a warm, slightly gravelly, unhurried voice, crisp received pronunciation, and a gentle, dry wit.";
+const BUTLER_PREVIEW_TEXT =
+  "Starting with Work and School, sir. Your biology lab report is due Monday at 11:59 PM, sir, and Doctor Vance asks that you attach your raw data tables. I took the liberty of noting the deadline, sir.";
+
 type Tab = "voices" | "design" | "custom";
 
 interface Props {
@@ -284,6 +290,16 @@ export function VoiceBox({ active, onSelect, onAuthError }: Props) {
 
       {tab === "design" && (
         <div className="mt-4 space-y-3">
+          <button
+            className={ghost}
+            onClick={() => {
+              setDescription(BUTLER_DESCRIPTION);
+              setDesignText(BUTLER_PREVIEW_TEXT);
+              setSaveNames({});
+            }}
+          >
+            🎩 Fill in the Butler voice
+          </button>
           <label className="block text-sm font-semibold">
             Voice description <span className="font-normal text-slate-400">({description.trim().length}/1000, at least 20)</span>
             <textarea

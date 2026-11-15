@@ -1,7 +1,9 @@
 import "server-only";
 import { ApiError as GenAiError, GoogleGenAI } from "@google/genai";
 import { ApiError } from "@/lib/errors";
-import { SYSTEM_PROMPT } from "@/lib/system-prompt";
+import { BUTLER_PERSONA, SYSTEM_PROMPT } from "@/lib/system-prompt";
+
+export type Persona = "standard" | "butler";
 import { wrapEmail } from "@/lib/triage";
 import type { ParsedEmail } from "@/lib/gmail";
 
@@ -33,23 +35,27 @@ function mapGeminiError(err: unknown): ApiError {
   return new ApiError(502, "GEMINI_ERROR", "Couldn't summarize with Gemini. Please try again.");
 }
 
-async function generate(model: string, email: ParsedEmail): Promise<string> {
+async function generate(model: string, email: ParsedEmail, persona: Persona): Promise<string> {
   const res = await getClient().models.generateContent({
     model,
     contents: wrapEmail(email),
-    config: { systemInstruction: SYSTEM_PROMPT, temperature: 0.1, maxOutputTokens: 2048 },
+    config: {
+      systemInstruction: persona === "butler" ? `${SYSTEM_PROMPT}\n\n${BUTLER_PERSONA}` : SYSTEM_PROMPT,
+      temperature: 0.1,
+      maxOutputTokens: 2048,
+    },
   });
   return (res.text ?? "").trim();
 }
 
 /** Summarizes one email with the exact system prompt; returns "DISCARDED: SPAM" for spam. */
-export async function summarizeEmail(email: ParsedEmail): Promise<string> {
+export async function summarizeEmail(email: ParsedEmail, persona: Persona = "standard"): Promise<string> {
   try {
-    return await generate(MODEL, email);
+    return await generate(MODEL, email, persona);
   } catch (err) {
     if (FALLBACK_MODEL && FALLBACK_MODEL !== MODEL && isBusy(err)) {
       try {
-        return await generate(FALLBACK_MODEL, email);
+        return await generate(FALLBACK_MODEL, email, persona);
       } catch (fallbackErr) {
         throw mapGeminiError(fallbackErr);
       }
@@ -59,7 +65,7 @@ export async function summarizeEmail(email: ParsedEmail): Promise<string> {
 }
 
 /** Summarizes emails in parallel (a few at a time, to stay under free-tier rate limits). */
-export async function summarizeAll(emails: ParsedEmail[]): Promise<Array<{ email: ParsedEmail; output: string | null; error?: string }>> {
+export async function summarizeAll(emails: ParsedEmail[], persona: Persona = "standard"): Promise<Array<{ email: ParsedEmail; output: string | null; error?: string }>> {
   const results: Array<{ email: ParsedEmail; output: string | null; error?: string }> = new Array(emails.length);
   let next = 0;
   async function worker() {
@@ -67,7 +73,7 @@ export async function summarizeAll(emails: ParsedEmail[]): Promise<Array<{ email
       const i = next++;
       const email = emails[i]!;
       try {
-        results[i] = { email, output: await summarizeEmail(email) };
+        results[i] = { email, output: await summarizeEmail(email, persona) };
       } catch (err) {
         results[i] = { email, output: null, error: err instanceof ApiError ? err.message : "Summary failed." };
       }

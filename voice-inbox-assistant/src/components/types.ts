@@ -16,6 +16,7 @@ export interface QueueItem {
   from: string;
   subject: string;
   category: "work" | "personal" | "transactions";
+  group: "work" | "school" | "personal" | "transactions";
   summary: string;
 }
 

@@ -3,6 +3,12 @@ import Google from "next-auth/providers/google";
 
 export const GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.readonly";
 
+/**
+ * One fixed session cookie name. SameSite=None + Secure lets the app stay signed in when it's
+ * shown inside the Chrome extension's side panel (Chrome accepts Secure cookies on localhost).
+ */
+export const SESSION_COOKIE = "authjs.session-token";
+
 /** Exchanges a Google refresh token for a new access token. Throws on invalid_grant (revoked or expired). */
 export async function refreshGoogleToken(refreshToken: string) {
   const res = await fetch("https://oauth2.googleapis.com/token", {
@@ -30,6 +36,9 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   trustHost: true,
   secret: process.env.AUTH_SECRET ?? process.env.NEXTAUTH_SECRET,
   session: { strategy: "jwt" },
+  cookies: {
+    sessionToken: { name: SESSION_COOKIE, options: { httpOnly: true, sameSite: "none", path: "/", secure: true } },
+  },
   providers: [
     Google({
       clientId: process.env.GOOGLE_CLIENT_ID,
