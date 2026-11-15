@@ -147,8 +147,12 @@ export function Dashboard({ name, email, sessionExpired }: { name: string; email
         setExpired(true);
         return;
       }
-      const res = await fetch("/api/emails", { method: "POST", headers: { "Content-Type": "application/json" }, // The Butler voice also brings the butler's way of speaking.
-        body: JSON.stringify({ count, length: summaryLength, persona: voiceRef.current.label === BUTLER_NAME ? "butler" : "standard" }),
+      const res = await fetch("/api/emails", { method: "POST", headers: { "Content-Type": "application/json" }, // Character voices also bring their way of speaking.
+        body: JSON.stringify({
+          count,
+          length: summaryLength,
+          persona: voiceRef.current.label === BUTLER_NAME ? "butler" : voiceRef.current.label === "The Angry Coach" ? "coach" : "standard",
+        }),
       });
       if (!res.ok) {
         const { message, code } = await readError(res);

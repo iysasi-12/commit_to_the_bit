@@ -11,7 +11,7 @@ export const maxDuration = 120;
 export async function POST(req: Request) {
   try {
     const body = (await req.json().catch(() => ({}))) as { count?: unknown; persona?: unknown; length?: unknown };
-    const persona = body.persona === "butler" ? "butler" : "standard";
+    const persona = body.persona === "butler" || body.persona === "coach" ? body.persona : "standard";
     const length = body.length === "short" || body.length === "long" ? body.length : "medium";
     const count = Number(body.count ?? 10);
     if (!Number.isInteger(count) || count < 1 || count > 50) throw new ApiError(400, "BAD_COUNT", "Choose between 1 and 50 emails.");
