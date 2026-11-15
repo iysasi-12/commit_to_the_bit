@@ -84,14 +84,7 @@ The `chrome-extension/` folder adds a **🎧 AI Summary** button to Gmail that o
 3. Open the app in a normal tab and **sign in with Google** once (Google won't show sign-in inside a side panel).
 4. In Gmail, click **🎧 AI Summary** and pick Short, Medium or Long.
 
-**Which server? For now: this computer only** (http://localhost:3000). The live-site parts are commented out, marked `LIVE`, in `chrome-extension/panel.js`, `options.html` and `options.js`.
-
-To turn the live site on later:
-1. Uncomment the `LIVE` lines and set `DEFAULT_MODE = "auto"` in `panel.js` and `options.js`.
-2. Uncomment the two choices in `options.html`.
-3. Reload the extension.
-
-The extension then offers:
+**Which server?** Right-click the extension icon → **Options**. For localhost only, comment out the `LIVE` lines in `chrome-extension/panel.js` and set `DEFAULT_MODE = "local"` there and in `options.js`. The choices:
 - *Automatic*: vocamail.biz, or this computer if vocamail.biz isn't healthy. It requires `/api/health` to say `"app": "voice-inbox-assistant"`, so it also switches when the app has crashed or a different app is on the domain.
 - *vocamail.biz only*.
 - *This computer only*.

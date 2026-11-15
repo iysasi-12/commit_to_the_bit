@@ -238,6 +238,7 @@ jobs:
         run: |
           prev="$(ssh vultr "grep -s '^APP_IMAGE=' /opt/voice-inbox/.env | cut -d= -f2-" || true)"
           echo "PREVIOUS_IMAGE=${prev}" >> "$GITHUB_ENV"
+          echo "REMEMBERED=yes" >> "$GITHUB_ENV"
           echo "Running now: ${prev:-nothing yet (first deploy)}"
 
       - name: Write server .env
@@ -320,8 +321,18 @@ jobs:
           npm run check:live -- "https://${DOMAIN}" 3 "$GITHUB_SHA"
 
       - name: Roll back to the previous version if any check failed
-        if: failure() && env.PREVIOUS_IMAGE != ''
+        if: failure() && env.REMEMBERED == 'yes'
         run: |
+          if [ -z "${PREVIOUS_IMAGE}" ]; then
+            # First deploy of this app failed: stop it and bring back whatever ran before (VocaMail).
+            echo "::warning::The first deploy failed its checks; restoring the previous site."
+            ssh vultr "cd /opt/voice-inbox 2>/dev/null && docker compose down || true; if [ -f /opt/vocamail/docker-compose.yml ]; then cd /opt/vocamail && docker compose up -d; fi"
+            for i in $(seq 1 30); do
+              if curl -fsS "https://${DOMAIN}/" >/dev/null 2>&1; then echo "Previous site is back at https://${DOMAIN}. This run stays red so the failure gets fixed."; exit 0; fi
+              sleep 5
+            done
+            echo "::error::The previous site didn't come back"; exit 1
+          fi
           echo "::warning::This deploy failed its checks; putting ${PREVIOUS_IMAGE} back."
           ssh vultr "cd /opt/voice-inbox && sed -i 's|^APP_IMAGE=.*|APP_IMAGE=${PREVIOUS_IMAGE}|' .env && docker compose up -d app"
           prev_commit="${PREVIOUS_IMAGE##*:}"

@@ -109,6 +109,7 @@ const PUBLIC = [
   ["/api/health is OK with all keys set", async () => {
     const r = await get("/api/health");
     const j = r.json ?? {};
+    if (r.status === 200 && j.app !== "voice-inbox-assistant") return [false, "a different app is running on this domain, not Voice Inbox Assistant"];
     const keys = j.configured?.google && j.configured?.gemini && j.configured?.elevenlabs;
     const authOk = j.configured?.authUrl === base;
     const commitOk = !expectCommit || j.commit === expectCommit;

@@ -1,9 +1,9 @@
 // Saves which server the side panel loads. The panel reloads itself when this changes.
 const form = document.getElementById("form");
 const saved = document.getElementById("saved");
-// For now only "local" is offered. LIVE: add "auto" and "live" back (see panel.js).
-const MODES = [/* "auto", "live", */ "local"];
-const DEFAULT_MODE = "local"; // later: "auto"
+// LOCALHOST ONLY: reduce to ["local"], set DEFAULT_MODE to "local" (see panel.js).
+const MODES = ["auto", "live", "local"];
+const DEFAULT_MODE = "auto";
 const MESSAGES = {
   auto: "Saved. The side panel uses vocamail.biz, or this computer if vocamail.biz isn't working.",
   live: "Saved. The side panel uses vocamail.biz only.",

@@ -2,21 +2,21 @@
 // ?length=…&autostart=1 so it starts summarizing right away.
 
 // ---- Where the side panel finds the app ----------------------------------------------------
-// FOR NOW: this computer only (start the app with `npm.cmd run dev`).
-//
-// TO USE THE LIVE SITE LATER: uncomment the three lines marked LIVE below, switch DEFAULT_MODE
-// to "auto", and uncomment the two matching choices in options.html and options.js.
-//   "auto"  tries the live site first, and uses this computer if the live site isn't healthy.
+// The live site, with this computer as the backup (start it with `npm.cmd run dev`).
+// The Options page picks the mode (right-click the extension icon → Options):
+//   "auto"  (default) the live site when THIS app is running there and healthy, otherwise this
+//           computer. A different app on the domain doesn't count.
 //   "live"  only the live site.
 //   "local" only this computer.
-// const LIVE_URL = "https://vocamail.biz/"; // LIVE
+// LOCALHOST ONLY: comment out the three LIVE lines and set DEFAULT_MODE to "local".
+const LIVE_URL = "https://vocamail.biz/"; // LIVE
 const LOCAL_URL = "http://localhost:3000/";
 const TRY_ORDER = {
-  // auto: [LIVE_URL, LOCAL_URL], // LIVE
-  // live: [LIVE_URL], // LIVE
+  auto: [LIVE_URL, LOCAL_URL], // LIVE
+  live: [LIVE_URL], // LIVE
   local: [LOCAL_URL],
 };
-const DEFAULT_MODE = "local"; // later: "auto"
+const DEFAULT_MODE = "auto";
 const TIMEOUT_MS = 4000;
 // ---------------------------------------------------------------------------------------------
 
