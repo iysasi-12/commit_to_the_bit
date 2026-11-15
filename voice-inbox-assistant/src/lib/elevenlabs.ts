@@ -42,6 +42,13 @@ async function elevenError(res: Response): Promise<ApiError> {
   if (s === "invalid_api_key") return new ApiError(503, "ELEVENLABS_KEY", "ElevenLabs rejected the API key. Check ELEVENLABS_API_KEY in .env.local.");
   if (s === "quota_exceeded") return new ApiError(402, "ELEVENLABS_QUOTA", `ElevenLabs is out of credits: ${message || "quota exceeded"}.`);
   if (s === "voice_not_found" || res.status === 404) return new ApiError(404, "VOICE_NOT_FOUND", "That ElevenLabs voice wasn't found. Pick another voice or check the voice ID.");
+  if (s === "detected_captcha_voice" || message.toLowerCase().includes("requires verification")) {
+    return new ApiError(
+      403,
+      "VOICE_NEEDS_VERIFICATION",
+      "ElevenLabs needs you to verify this cloned voice before it can speak. Go to elevenlabs.io → Voices → My Voices, open the voice, and complete the short verification (read a sentence aloud). Then try again.",
+    );
+  }
   if (s === "missing_permissions") {
     const perm = message.match(/permission (\w+)/)?.[1] ?? "the needed permission";
     return new ApiError(403, "ELEVENLABS_PERMISSION", `Your ElevenLabs API key is missing the "${perm}" permission. In ElevenLabs go to Developers → API Keys, edit the key, and turn it on.`);

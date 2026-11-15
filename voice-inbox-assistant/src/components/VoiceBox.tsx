@@ -261,7 +261,8 @@ export function VoiceBox({ active, onSelect, onAuthError }: Props) {
       const json = (await res.json()) as { voice_id: string; name: string; requires_verification: boolean };
       onSelect({ id: json.voice_id, label: json.name });
       setNotice(
-        json.requires_verification ? `Cloned "${json.name}". ElevenLabs says it needs verification before it can be used.` : `Cloned "${json.name}" and set it as your voice.`,
+        json.requires_verification
+          ? `Created "${json.name}", but ElevenLabs needs a quick verification before it can speak: go to elevenlabs.io → Voices → My Voices, open "${json.name}", and read the verification sentence aloud.` : `Cloned "${json.name}" and set it as your voice.`,
       );
       setCloneName("");
       setCloneFile(null);
