@@ -11,6 +11,7 @@ interface RawVoice {
   description?: string | null;
   preview_url?: string | null;
   labels?: Record<string, string>;
+  created_at_unix?: number | null;
 }
 
 /** GET → the account's voices, split into saved custom voices and ElevenLabs presets. */
@@ -36,6 +37,7 @@ export async function GET(req: Request) {
       description: v.description ?? "",
       preview_url: v.preview_url ?? null,
       labels: v.labels ?? {},
+      created_at_unix: v.created_at_unix ?? null,
     });
     // Voice slots and cloning access, so the UI can explain why a clone would fail.
     let slots: { used: number; limit: number; canClone: boolean } | null = null;

@@ -501,6 +501,17 @@ export function VoiceBox({ active, onSelect, onAuthError }: Props) {
             <button className={primary} onClick={() => void clone()} disabled={busy === "clone" || recording || !cloneFile || !cloneName.trim() || !consent}>
               {busy === "clone" ? "Creating voice…" : "Create voice"}
             </button>
+            {(() => {
+              // The most recently made voice (cloned or designed); library voices aren't included.
+              const last = custom
+                .filter((v) => v.category === "cloned" || v.category === "generated")
+                .sort((a, b) => (b.created_at_unix ?? 0) - (a.created_at_unix ?? 0))[0];
+              return last ? (
+                <button className={`${ghost} w-full`} onClick={() => void removeVoice(last.voice_id, last.name)} disabled={busy === `remove-${last.voice_id}`}>
+                  {busy === `remove-${last.voice_id}` ? "Removing…" : `Remove last voice made (${last.name})`}
+                </button>
+              ) : null;
+            })()}
             <p className="text-xs text-slate-400">Uses ElevenLabs Instant Voice Cloning (paid plan). The new voice appears in your saved custom voices and is set as active.</p>
           </div>
           <div className="space-y-3">

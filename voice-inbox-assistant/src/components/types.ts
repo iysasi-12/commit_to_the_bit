@@ -4,6 +4,7 @@ export interface VoiceOption {
   category?: string;
   description?: string;
   preview_url?: string | null;
+  created_at_unix?: number | null;
 }
 
 export interface ActiveVoice {
