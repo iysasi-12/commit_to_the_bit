@@ -4,13 +4,16 @@ import { connection } from "next/server";
 
 export const metadata: Metadata = { title: "Privacy policy · Voice Inbox Assistant" };
 
-const UPDATED = "November 14, 2026";
+const UPDATED = "November 15, 2026";
 
 /** Public privacy policy (Google's OAuth verification requires one on the app's domain). */
 export default async function Privacy() {
   // Rendered per request so CONTACT_EMAIL comes from the server's env, not the Docker build.
   await connection();
   const contact = process.env.CONTACT_EMAIL;
+  // Set GEMINI_PAID_TIER=true only once billing is on for the Gemini key's project. On the free
+  // tier, Google may use the content sent to Gemini to improve its products, and the page says so.
+  const paidGemini = process.env.GEMINI_PAID_TIER === "true";
   const h2 = "mt-8 text-xl font-bold";
   const p = "mt-3 leading-relaxed text-slate-300";
   return (
@@ -42,10 +45,24 @@ export default async function Privacy() {
 
       <h2 className={h2}>How it is used and who processes it</h2>
       <ul className={`${p} list-disc space-y-2 pl-5`}>
-        <li>The text of the emails you scan is sent to the Google Gemini API to write the summaries.</li>
+        <li>
+          The text of the emails you scan is sent to the Google Gemini API to write the summaries.{" "}
+          {paidGemini ? (
+            "The app uses Gemini's paid tier, under which Google does not use this content to improve its products."
+          ) : (
+            <>
+              <strong>The app currently uses Gemini&apos;s free tier, under which Google may use the content sent to it to improve Google&apos;s products</strong>{" "}
+              (see the{" "}
+              <a className="text-indigo-300 underline" href="https://ai.google.dev/gemini-api/terms" target="_blank" rel="noreferrer">
+                Gemini API terms
+              </a>
+              ). Don&apos;t scan an inbox you aren&apos;t comfortable sharing on that basis.
+            </>
+          )}
+        </li>
         <li>The summaries (not the original emails) are sent to ElevenLabs to turn them into speech.</li>
         <li>If you record or upload your voice to create a custom voice, that audio is sent to ElevenLabs to make the voice.</li>
-        <li>Your data is used only to provide these features to you. It is not sold, not used for advertising, and not shared with anyone else.</li>
+        <li>Your data is used only to provide these features to you. The app does not sell it, use it for advertising, or share it with anyone besides the services above.</li>
       </ul>
 
       <h2 className={h2}>What is stored</h2>
@@ -68,8 +85,8 @@ export default async function Privacy() {
         <a className="text-indigo-300 underline" href="https://developers.google.com/terms/api-services-user-data-policy" target="_blank" rel="noreferrer">
           Google API Services User Data Policy
         </a>
-        , including the Limited Use requirements. Gmail data is never used to train AI models, for advertising, or for any purpose other than the summaries you ask
-        for.
+        , including the Limited Use requirements. The app itself never uses Gmail data for advertising or for anything other than the summaries you ask for.
+        {paidGemini ? " Gmail data is not used to train AI models." : " How Google may use content sent to Gemini's free tier is described above."}
       </p>
 
       <h2 className={h2}>Your choices</h2>

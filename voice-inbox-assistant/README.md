@@ -131,6 +131,7 @@ Open http://localhost:3000. The older Inbox Voice app in the parent folder also 
 | `VOICES_PER_USER` | Optional, default 3. |
 | `VOICE_OWNER_SECRET` | Random string behind the private voice owner tags. Must match the server's, or voices made here won't show up for their owner on the live site. |
 | `CONTACT_EMAIL` | Shown on `/privacy` as the contact for questions and deletion requests. |
+| `GEMINI_PAID_TIER` | `false` (free tier, the default): the privacy page says Google may use content sent to Gemini to improve its products. Set `true` only after enabling billing. |
 
 ## Google Cloud: letting people sign in
 
@@ -181,6 +182,7 @@ You can also deploy by hand: **Actions → CI → Run workflow** on `main`.
 | `ADMIN_EMAILS` | Your Google email(s), comma-separated |
 | `CONTACT_EMAIL` | Contact shown on `/privacy` |
 | `VOICES_PER_USER`, `GEMINI_MODEL`, `GEMINI_FALLBACK_MODEL`, `ELEVENLABS_MODEL` | Optional overrides |
+| `GEMINI_PAID_TIER` | Leave unset while on the free tier. Set to `true` only after billing is on; it updates the privacy page. |
 
 Generate a random secret with:
 

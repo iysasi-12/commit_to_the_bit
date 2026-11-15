@@ -238,6 +238,7 @@ jobs:
           GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
           GEMINI_FALLBACK_MODEL: ${{ vars.GEMINI_FALLBACK_MODEL }}
           ELEVENLABS_MODEL: ${{ vars.ELEVENLABS_MODEL }}
+          GEMINI_PAID_TIER: ${{ vars.GEMINI_PAID_TIER }}
         run: |
           umask 077
           {
@@ -247,7 +248,7 @@ jobs:
             echo "NEXTAUTH_URL=https://${DOMAIN}"
             echo "NEXTAUTH_SECRET=${AUTH_SECRET}"
             for name in AUTH_SECRET VOICE_OWNER_SECRET GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET GEMINI_API_KEY ELEVENLABS_API_KEY \
-                        ADMIN_EMAILS CONTACT_EMAIL VOICES_PER_USER GEMINI_MODEL GEMINI_FALLBACK_MODEL ELEVENLABS_MODEL; do
+                        ADMIN_EMAILS CONTACT_EMAIL VOICES_PER_USER GEMINI_MODEL GEMINI_FALLBACK_MODEL ELEVENLABS_MODEL GEMINI_PAID_TIER; do
               # Optional settings that are empty are left out so the app's defaults apply.
               if [ -n "${!name}" ]; then echo "${name}=${!name}"; fi
             done
