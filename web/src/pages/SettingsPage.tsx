@@ -220,7 +220,7 @@ export function SettingsPage({ onSignedOut }: { onSignedOut: () => void }) {
           </span>
         </div>
         <p className="small muted" style={{ marginTop: 10 }}>
-          Inbox Voice works with Gmail through Google's official API. It doesn't read text messages, iMessage, WhatsApp or other apps, and it isn't a CarPlay app. In a car
+          VocaMail works with Gmail through Google's official API. It doesn't read text messages, iMessage, WhatsApp or other apps, and it isn't a CarPlay app. In a car
           you can listen over Bluetooth like any audio.
         </p>
       </section>

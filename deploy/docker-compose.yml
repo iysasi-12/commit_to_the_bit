@@ -1,0 +1,34 @@
+# Runs on the Vultr server in /opt/vocamail. The CI deploy job copies this file,
+# the Caddyfile and a generated .env there, then runs `docker compose up -d`.
+services:
+  app:
+    image: ${VOCAMAIL_IMAGE:?set by the deploy job}
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      TRUST_PROXY: "1"
+    volumes:
+      - vocamail-data:/app/data
+    expose:
+      - "3000"
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN: ${VOCAMAIL_DOMAIN:?set by the deploy job}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  vocamail-data:
+  caddy-data:
+  caddy-config:

@@ -35,6 +35,8 @@ export interface AppConfig {
   dataDir: string;
   demoMode: boolean;
   secureCookies: boolean;
+  /** Number of reverse proxies in front of the app (e.g. Caddy). 0 = none; use the socket address. */
+  trustProxyHops: number;
   sessionSecret: string;
   cacheTtlHours: number;
   google: { clientId: string; clientSecret: string; redirectUri: string } | null;
@@ -138,6 +140,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, overrides: Part
     dataDir,
     demoMode: bool(env, "DEMO_MODE", true),
     secureCookies: publicUrl.startsWith("https://"),
+    trustProxyHops: int(env, "TRUST_PROXY", 0),
     sessionSecret: overrides.sessionSecret ?? resolveSessionSecret(env, dataDir),
     cacheTtlHours: int(env, "CACHE_TTL_HOURS", 72),
     google:

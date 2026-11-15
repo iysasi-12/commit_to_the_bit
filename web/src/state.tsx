@@ -236,7 +236,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         if ("mediaSession" in navigator && typeof MediaMetadata !== "undefined") {
           navigator.mediaSession.metadata = new MediaMetadata({
             title: s.summary.title,
-            artist: `Inbox Voice · AI voice${a.audio.voiceName ? ` (${a.audio.voiceName})` : ""}`,
+            artist: `VocaMail · AI voice${a.audio.voiceName ? ` (${a.audio.voiceName})` : ""}`,
             album: "AI-generated email summary",
           });
         }

@@ -1,5 +1,5 @@
 {
-  "name": "inbox-voice",
+  "name": "vocamail",
   "version": "0.1.0",
   "private": true,
   "description": "Hear an AI-voiced summary of your Gmail, with AI category filters and a voice you choose.",

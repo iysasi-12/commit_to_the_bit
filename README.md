@@ -1,4 +1,4 @@
-# Inbox Voice
+# VocaMail
 
 Hear your Gmail. Sign in with Google, tap **AI Summary**, and an AI voice reads a short briefing of your latest emails: what needs a reply, what's due, and what can wait. The **Filter** tab uses AI to sort mail into School, Work, Transactions, Personal, Promotions (and any categories you add) so you can hear a summary of just one category. The **Voice** tab lets you pick an ElevenLabs voice, add one from the ElevenLabs Voice Library, or record your own voice and have summaries read in it.
 

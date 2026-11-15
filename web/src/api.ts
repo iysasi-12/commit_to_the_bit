@@ -26,7 +26,7 @@ async function handle<T>(res: Response): Promise<T> {
   return json as T;
 }
 
-const HEADERS = { "x-inbox-voice": "1" };
+const HEADERS = { "x-vocamail": "1" };
 
 export async function api<T>(path: string, init: { method?: string; body?: unknown } = {}): Promise<T> {
   let res: Response;
@@ -48,7 +48,7 @@ export function uploadForm<T>(path: string, form: FormData, onProgress: (fractio
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open("POST", path);
-    xhr.setRequestHeader("x-inbox-voice", "1");
+    xhr.setRequestHeader("x-vocamail", "1");
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable) onProgress(e.loaded / e.total);
     };

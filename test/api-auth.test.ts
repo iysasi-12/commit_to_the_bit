@@ -158,7 +158,7 @@ describe("sign-in, sessions and request safety", () => {
     assert.equal(missing.status, 404);
     const res = await fetch(h.baseUrl + "/api/settings", {
       method: "PATCH",
-      headers: { "content-type": "application/json", "x-inbox-voice": "1", cookie: client.cookieHeader() },
+      headers: { "content-type": "application/json", "x-vocamail": "1", cookie: client.cookieHeader() },
       body: "{not json",
     });
     assert.equal(res.status, 400);
