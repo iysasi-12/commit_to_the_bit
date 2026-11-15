@@ -46,14 +46,21 @@ function capitalize(text: string): string {
   return text.replace(/^(\W*)(\p{Ll})/u, (_, pre: string, ch: string) => pre + ch.toUpperCase());
 }
 
-/** Finer tab used in the UI: the prompt's Work/School category is split into Work and School. */
-export type Group = "work" | "school" | "personal" | "transactions" | "skipped";
+/**
+ * Finer tab used in the UI: the prompt's Work/School category is split into Work and School.
+ * "spam" = possible spam (listed, never read automatically); "skipped" = the sensitive notice.
+ */
+export type Group = "work" | "school" | "personal" | "transactions" | "spam" | "skipped";
 
 /** Spoken order of the sections (the sensitive-email notice always comes last). */
-export const GROUP_ORDER: Group[] = ["work", "school", "personal", "transactions", "skipped"];
+export const GROUP_ORDER: Group[] = ["work", "school", "personal", "transactions", "spam", "skipped"];
 
+/** Groups that are not ordinary readable sections (no intro, no First/Finally). */
+const SPECIAL_GROUPS = new Set<Group>(["spam", "skipped"]);
+
+// Whole words only: "exam" must not match "example", nor "grade" match "upgrade".
 const SCHOOL_HINTS =
-  /\.edu\b|canvas|blackboard|moodle|instructure|professor|\bprof\b|instructor|\bTA\b|teaching assistant|\bclass\b|course|lecture|assignment|homework|exam|quiz|midterm|syllabus|grade|lab report|semester|campus|university|college|school|student|tuition|registrar/i;
+  /\.edu\b|\b(canvas|blackboard|moodle|instructure|professor|prof|instructor|teaching assistant|class|classes|courses?|coursework|lectures?|assignments?|homework|exams?|quiz|quizzes|midterms?|finals week|syllabus|grades?|graded|grading|lab report|semester|campus|university|college|school|students?|tuition|registrar)\b|\bTA\b/i;
 
 /** Splits Work/School into School (classes, professors, .edu, learning platforms) or Work. */
 export function workOrSchool(from: string, subject: string, summary: string): "work" | "school" {
@@ -70,6 +77,10 @@ export interface QueueItem {
   body: string;
   /** What is spoken when the whole queue (the All tab) is played: section intro + First/Finally + body. */
   summary: string;
+  /** "unsummarized": the AI failed or gave an unclear answer (shown, never hidden). "possible-spam": set aside. */
+  note?: "unsummarized" | "possible-spam";
+  /** Why an email was set aside as possible spam. */
+  reasons?: string[];
 }
 
 export function isSpam(output: string): boolean {
@@ -123,8 +134,9 @@ export function detectCategory(output: string): { category: Category; body: stri
 // Spoken order: a section intro, then "First," … "Finally," inside each section.
 // ---------------------------------------------------------------------------------------------
 
-const SECTION_NAME: Record<Exclude<Group, "skipped">, string> = { work: "Work", school: "School", personal: "Personal", transactions: "Transactions" };
-const SECTION_NOUN: Record<Exclude<Group, "skipped">, string> = { work: "work", school: "school", personal: "personal", transactions: "transaction" };
+type Section = Exclude<Group, "skipped" | "spam">;
+const SECTION_NAME: Record<Section, string> = { work: "Work", school: "School", personal: "Personal", transactions: "Transactions" };
+const SECTION_NOUN: Record<Section, string> = { work: "work", school: "school", personal: "personal", transactions: "transaction" };
 const NUMBER_WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen", "twenty"];
 const ORDINALS = ["First", "Second", "Third", "Fourth", "Fifth", "Sixth", "Seventh", "Eighth", "Ninth", "Tenth"];
 const say = (n: number) => NUMBER_WORDS[n] ?? String(n);
@@ -155,17 +167,17 @@ function positionWord(i: number, n: number): string | null {
  * "Lastly, Transactions…". A single section gets "You have three work emails." instead.
  */
 export function composeSpoken(items: ReadonlyArray<Pick<QueueItem, "group" | "body">>): string[] {
-  const sections: Array<Exclude<Group, "skipped">> = [];
+  const sections: Section[] = [];
   const size = new Map<Group, number>();
   for (const it of items) {
-    if (it.group === "skipped") continue;
-    if (!size.has(it.group)) sections.push(it.group);
+    if (SPECIAL_GROUPS.has(it.group)) continue;
+    if (!size.has(it.group)) sections.push(it.group as Section);
     size.set(it.group, (size.get(it.group) ?? 0) + 1);
   }
   const seen = new Map<Group, number>();
   return items.map((it) => {
-    if (it.group === "skipped") return it.body;
-    const group = it.group;
+    if (SPECIAL_GROUPS.has(it.group)) return it.body;
+    const group = it.group as Section;
     const n = size.get(group)!;
     const i = seen.get(group) ?? 0;
     seen.set(group, i + 1);
@@ -188,17 +200,53 @@ export function withSpoken<T extends Pick<QueueItem, "group" | "body" | "summary
   return items.map((it, i) => ({ ...it, summary: spoken[i]! }));
 }
 
+/** "Jordan Taylor <jt@x.com>" → "Jordan Taylor". */
+function displayName(from: string): string {
+  return from.replace(/<[^>]*>/g, "").replace(/["']/g, "").trim() || from.replace(/[<>]/g, "").trim() || "an unknown sender";
+}
+
+export interface SummaryResult {
+  id: string;
+  from: string;
+  subject: string;
+  /** Gemini's answer, or null when the request failed. */
+  output: string | null;
+  /** Set only when the app confirmed possible spam (src/lib/spam.ts); otherwise spam answers aren't trusted. */
+  spamReasons?: string[];
+}
+
 /**
- * Drops spam and orders emails Work → School → Personal → Transactions (keeping inbox order
- * within a section). Each item keeps its plain `body`; `summary` is the spoken All-tab text.
+ * Orders emails Work → School → Personal → Transactions (keeping inbox order within a section),
+ * then possible spam. Nothing is ever dropped:
+ *   - a failed or unclear AI answer becomes an "I couldn't summarize…" item in its likely section;
+ *   - "DISCARDED: SPAM" becomes possible spam only with confirmed reasons, otherwise it is treated
+ *     like an unclear answer (shown and read normally).
+ * Each item keeps its plain `body`; `summary` is the spoken All-tab text.
  */
-export function buildQueue(results: Array<{ id: string; from: string; subject: string; output: string }>): QueueItem[] {
+export function buildQueue(results: SummaryResult[]): QueueItem[] {
   const items: QueueItem[] = [];
+  const unsummarized = (r: SummaryResult): QueueItem => {
+    const body = `I couldn't summarize the email from ${displayName(r.from)} about "${r.subject}". You can read it in Gmail.`;
+    const { category } = detectCategory(`${r.subject}`);
+    const group: Group = category === "work" ? workOrSchool(r.from, r.subject, "") : category;
+    return { id: r.id, from: r.from, subject: r.subject, category, group, body, summary: body, note: "unsummarized" };
+  };
   for (const r of results) {
-    const text = cleanForSpeech(r.output);
-    if (!text || isSpam(text)) continue;
+    const text = r.output === null ? "" : cleanForSpeech(r.output);
+    if (text && isSpam(text) && r.spamReasons?.length) {
+      const body = `Possible spam from ${displayName(r.from)}: "${r.subject}". I didn't read it.`;
+      items.push({ id: r.id, from: r.from, subject: r.subject, category: "transactions", group: "spam", body, summary: body, note: "possible-spam", reasons: r.spamReasons });
+      continue;
+    }
+    if (!text || isSpam(text)) {
+      items.push(unsummarized(r));
+      continue;
+    }
     const { category, body } = detectCategory(text);
-    if (!body || isSpam(body)) continue;
+    if (!body || isSpam(body)) {
+      items.push(unsummarized(r));
+      continue;
+    }
     const group: Group = category === "work" ? workOrSchool(r.from, r.subject, body) : category;
     items.push({ id: r.id, from: r.from, subject: r.subject, category, group, body, summary: body });
   }

@@ -65,7 +65,14 @@ const inbox = [
 inbox.sort((a, b) => a.ageH - b.ageH);
 const sentAt = (e) => NOW - e.ageH * 3_600_000;
 
-const log = { gmail: [], geminiBodies: [], badAuth: 0, queries: [] };
+const log = { gmail: [], geminiBodies: [], badAuth: 0, queries: [], actions: [] };
+const LABELS = [
+  { id: "INBOX", name: "INBOX", type: "system" },
+  { id: "Label_9", name: "Work", type: "user" },
+  { id: "Label_3", name: "Receipts", type: "user" },
+  { id: "CATEGORY_PROMOTIONS", name: "CATEGORY_PROMOTIONS", type: "system" },
+];
+const NOT_SPAM_MARKER = "has already been checked and it is NOT spam";
 const json = (res, status, obj) => {
   res.writeHead(status, { "Content-Type": "application/json" });
   res.end(JSON.stringify(obj));
@@ -75,9 +82,19 @@ const server = createServer(async (req, res) => {
   let body = "";
   for await (const chunk of req) body += chunk;
   // ---- fake Gmail ----
+  if (url.pathname === "/gmail/v1/users/me/labels") {
+    if (req.headers.authorization !== `Bearer ${FAKE_TOKEN}`) log.badAuth++;
+    return json(res, 200, { labels: LABELS });
+  }
   if (url.pathname.startsWith("/gmail/v1/users/me/messages")) {
     if (req.headers.authorization !== `Bearer ${FAKE_TOKEN}`) log.badAuth++;
-    const id = url.pathname.split("/messages/")[1];
+    const [id, action] = (url.pathname.split("/messages/")[1] ?? "").split("/");
+    if (action) {
+      // Changes: only ever made when the person clicks Delete or Reorganize.
+      if (id === "noperm") return json(res, 403, { error: { code: 403, message: "Request had insufficient authentication scopes.", status: "PERMISSION_DENIED" } });
+      log.actions.push({ id, action, method: req.method, body: body ? JSON.parse(body) : null });
+      return json(res, 200, { id, labelIds: action === "trash" ? ["TRASH"] : ["Label_9"] });
+    }
     if (!id) {
       const n = Number(url.searchParams.get("maxResults") ?? 10);
       // Like Gmail search: "after:<unix seconds>" keeps only emails sent after that moment.
@@ -95,10 +112,12 @@ const server = createServer(async (req, res) => {
       { name: "From", value: email.from },
       { name: "Subject", value: email.subject },
     ];
-    if (format === "metadata") return json(res, 200, { id: email.id, threadId: email.id, payload: { headers } });
+    const labelIds = email.labels ?? ["INBOX"];
+    if (format === "metadata") return json(res, 200, { id: email.id, threadId: email.id, labelIds, payload: { headers } });
     return json(res, 200, {
       id: email.id,
       threadId: email.id,
+      labelIds,
       snippet: email.body.slice(0, 80),
       internalDate: String(Date.now()),
       payload: { mimeType: "text/plain", headers: [...headers, { name: "Date", value: "Sun, 15 Nov 2026 09:00:00 -0500" }], body: { data: Buffer.from(email.body).toString("base64url") } },
@@ -108,7 +127,13 @@ const server = createServer(async (req, res) => {
   if (url.pathname.endsWith(":generateContent")) {
     log.geminiBodies.push(body);
     const subject = body.match(/Subject: ([^\\\n]+)/)?.[1] ?? "";
-    const text = inbox.find((e) => e.subject === subject)?.summary ?? "DISCARDED: SPAM";
+    const email = inbox.find((e) => e.subject === subject);
+    // Per-email AI behavior for the spam phase: wrongly says spam until told it isn't, always
+    // says spam, or fails outright.
+    if (email?.ai === "fail") return json(res, 500, { error: { code: 500, message: "fake Gemini failure", status: "INTERNAL" } });
+    let text = email?.summary ?? "DISCARDED: SPAM";
+    if (email?.ai === "spam-until-told") text = body.includes(NOT_SPAM_MARKER) ? email.summary : "DISCARDED: SPAM";
+    if (email?.ai === "always-spam") text = "DISCARDED: SPAM";
     return json(res, 200, { candidates: [{ content: { role: "model", parts: [{ text }] }, finishReason: "STOP", index: 0 }], modelVersion: "fake" });
   }
   json(res, 404, { error: "unknown fake route" });
@@ -193,6 +218,64 @@ try {
   // Anything other than 8/16/48 is ignored (no cutoff), never an error.
   const odd = await fetch(`${base}/api/emails`, { method: "POST", headers: { "Content-Type": "application/json", cookie: `authjs.session-token=${session}` }, body: JSON.stringify({ count: 5, hours: 24 }), signal: AbortSignal.timeout(120000) });
   check("an unsupported window (24 hours) falls back to newest emails", odd.status === 200 && log.queries.at(-1) === null, `${odd.status}, query ${log.queries.at(-1)}`);
+
+  // ---- Conservative spam, AI failures, and Delete / Reorganize ----
+  inbox.length = 0;
+  inbox.push(
+    { id: "news", ageH: 1, from: "The Verge <newsletter@theverge.com>", subject: "This week in tech", labels: ["INBOX", "CATEGORY_UPDATES"], body: "Our top stories this week. Unsubscribe anytime.", ai: "spam-until-told", summary: "Finally, Transactions. The Verge newsletter covers this week's top tech stories." },
+    { id: "promo", ageH: 2, from: "Target <deals@target.com>", subject: "40% off this weekend only", labels: ["INBOX", "CATEGORY_PROMOTIONS"], body: "Shop the weekend sale. Limited time.", ai: "spam-until-told", summary: "Finally, Transactions. Target is running a 40 percent off sale this weekend." },
+    { id: "receipt", ageH: 3, from: "Spotify <no-reply@spotify.com>", subject: "Your receipt", body: "You paid $11.99 for Premium Individual.", summary: "Finally, Transactions. Spotify billed you eleven dollars and ninety-nine cents." },
+    { id: "raffle", ageH: 4, from: "Office Social Club <social@acme.example>", subject: "You have won the office raffle", labels: ["INBOX", "STARRED"], body: "Congratulations, you won! Claim your prize at the front desk.", ai: "spam-until-told", summary: "Next, Personal. You won the office raffle; pick up your prize at the front desk." },
+    { id: "scam", ageH: 5, from: "Lottery Board <win@intl-lotto.example>", subject: "Congratulations, you have won!", body: "You have won $850,000. Claim your prize now by replying with your bank details.", ai: "always-spam" },
+    { id: "broken", ageH: 6, from: "Priya Shah <priya@acme.example>", subject: "Quarterly report deadline", body: "Please send the quarterly report by Friday.", ai: "fail" },
+  );
+  const changesBefore = log.actions.length;
+  const s2 = await fetch(`${base}/api/emails`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", cookie: `authjs.session-token=${session}` },
+    body: JSON.stringify({ count: 10 }),
+    signal: AbortSignal.timeout(180000),
+  });
+  const d2 = await s2.json().catch(() => null);
+  const q2 = d2?.queue ?? [];
+  const item = (id) => q2.find((x) => x.id === id);
+  check("spam phase: scan succeeds", s2.status === 200, `${s2.status} ${d2?.code ?? ""}`);
+  for (const id of ["news", "promo", "receipt", "raffle"]) {
+    const it = item(id);
+    check(`not spam, summarized normally: ${id}`, Boolean(it) && it.group !== "spam" && !it.note && !it.body.startsWith("I couldn't"), it ? `${it.group}: ${it.body.slice(0, 60)}` : "missing");
+  }
+  check("the newsletter and promotion were re-checked, not discarded", d2?.stats?.recheckedNotSpam === 3, `re-checked ${d2?.stats?.recheckedNotSpam}`);
+  check("a starred email is never treated as spam, even if it looks like a prize email", item("raffle")?.group === "personal", item("raffle")?.group);
+  const scam = item("scam");
+  check("a clear scam is set aside as possible spam, with the reason", scam?.group === "spam" && scam?.note === "possible-spam" && scam?.reasons?.includes("prize or lottery claim"), JSON.stringify(scam?.reasons));
+  const broken = item("broken");
+  check("an AI failure is listed, not hidden", broken?.note === "unsummarized" && broken?.group !== "spam" && /couldn't summarize the email from Priya Shah/.test(broken?.body ?? ""), broken?.body);
+  check("stats: 1 possible spam, 1 couldn't be summarized", d2?.stats?.spam === 1 && d2?.stats?.failed === 1, JSON.stringify({ spam: d2?.stats?.spam, failed: d2?.stats?.failed }));
+  check("scanning never moves, deletes or relabels anything in Gmail", log.actions.length === changesBefore, `${log.actions.length - changesBefore} changes`);
+
+  const post = (path, payload) =>
+    fetch(`${base}${path}`, { method: "POST", headers: { "Content-Type": "application/json", cookie: `authjs.session-token=${session}` }, body: JSON.stringify(payload ?? {}) });
+  const del = await post("/api/emails/receipt/trash");
+  check("Delete moves exactly that email to Trash", del.status === 200 && log.actions.at(-1)?.id === "receipt" && log.actions.at(-1)?.action === "trash", `${del.status}`);
+  const lab = await fetch(`${base}/api/labels`, { headers: { cookie: `authjs.session-token=${session}` } });
+  const labels = (await lab.json().catch(() => null))?.labels ?? [];
+  check("Reorganize lists only your own labels, sorted", lab.status === 200 && JSON.stringify(labels.map((l) => l.name)) === JSON.stringify(["Receipts", "Work"]), JSON.stringify(labels));
+  const mv = await post("/api/emails/news/move", { labelId: "Label_9" });
+  const last = log.actions.at(-1);
+  check(
+    "Reorganize adds the label and only removes INBOX (other labels kept)",
+    mv.status === 200 && last?.action === "modify" && JSON.stringify(last?.body) === JSON.stringify({ addLabelIds: ["Label_9"], removeLabelIds: ["INBOX"] }),
+    JSON.stringify(last?.body),
+  );
+  const before = log.actions.length;
+  const bad = await post("/api/emails/bad%20id!/trash");
+  const badLabel = await post("/api/emails/news/move", { labelId: "../../x" });
+  check("invalid email or label ids are refused without touching Gmail", bad.status === 400 && badLabel.status === 400 && log.actions.length === before, `${bad.status}, ${badLabel.status}`);
+  const noperm = await post("/api/emails/noperm/trash");
+  const np = await noperm.json().catch(() => null);
+  check("an old read-only sign-in gets a clear 'sign in again' answer", noperm.status === 403 && np?.code === "GMAIL_NEEDS_PERMISSION", `${noperm.status} ${np?.code}`);
+  const anonDel = await fetch(`${base}/api/emails/receipt/trash`, { method: "POST" });
+  check("signed-out Delete is refused", anonDel.status === 401, `${anonDel.status}`);
 } catch (err) {
   check("test ran", false, err?.message ?? String(err));
 } finally {

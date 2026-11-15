@@ -21,11 +21,14 @@ export interface QueueItem {
   from: string;
   subject: string;
   category: "work" | "personal" | "transactions";
-  group: "work" | "school" | "personal" | "transactions" | "skipped";
+  group: "work" | "school" | "personal" | "transactions" | "spam" | "skipped";
   /** The summary with no lead-in or ordering words; the player adds them for the list being played. */
   body: string;
   /** Spoken text for the All tab (server-built); the player recomputes it per tab. */
   summary: string;
+  /** "unsummarized": the AI couldn't summarize it (still listed). "possible-spam": set aside, not read. */
+  note?: "unsummarized" | "possible-spam";
+  reasons?: string[];
 }
 
 export const DEFAULT_VOICE: ActiveVoice = { id: "", label: "" };

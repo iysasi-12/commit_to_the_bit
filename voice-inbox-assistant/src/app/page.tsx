@@ -28,8 +28,8 @@ export default async function Home() {
         </p>
         <SignInWatcher />
         <p className="mt-6 text-sm text-slate-400">
-          Read-only Gmail access. Email text is sent to Google Gemini to write the summaries, and summary text is sent to ElevenLabs to speak them. Nothing is stored on the
-          server.{" "}
+          Reads your Gmail, and only moves an email to Trash or files it under a label when you click Delete or Reorganize. Email text is sent to Google Gemini to write
+          the summaries, and summary text is sent to ElevenLabs to speak them. Nothing is stored on the server.{" "}
           <Link href="/privacy" className="font-semibold text-indigo-300 underline">
             Privacy policy
           </Link>
@@ -38,5 +38,12 @@ export default async function Home() {
     );
   }
 
-  return <Dashboard name={session.user.name ?? ""} email={session.user.email ?? ""} sessionExpired={session.error === "RefreshTokenError"} />;
+  return (
+    <Dashboard
+      name={session.user.name ?? ""}
+      email={session.user.email ?? ""}
+      sessionExpired={session.error === "RefreshTokenError"}
+      canModify={session.canModify === true}
+    />
+  );
 }

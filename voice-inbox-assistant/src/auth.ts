@@ -1,7 +1,12 @@
 import NextAuth from "next-auth";
 import Google from "next-auth/providers/google";
 
-export const GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.readonly";
+/**
+ * gmail.modify = read, plus move to Trash and change labels. The app only ever changes an email
+ * when the person clicks Delete or Reorganize; it never deletes permanently (no full Gmail scope).
+ */
+export const GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.modify";
+const MODIFY_SCOPE = GMAIL_SCOPE;
 
 /**
  * One fixed session cookie name. SameSite=None + Secure lets the app stay signed in when it's
@@ -62,6 +67,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           access_token: account.access_token ?? "",
           expires_at: account.expires_at ?? Math.floor(Date.now() / 1000 + 3600),
           refresh_token: account.refresh_token,
+          // Which Gmail permission was granted. Sessions from before Delete/Reorganize only have read.
+          can_modify: (account.scope ?? "").split(" ").includes(MODIFY_SCOPE),
           error: undefined,
         };
       }
@@ -78,8 +85,9 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       }
     },
     async session({ session, token }) {
-      // Only the error flag reaches the browser; Google tokens stay server-side.
+      // Only these flags reach the browser; Google tokens stay server-side.
       session.error = token.error;
+      session.canModify = token.can_modify === true;
       return session;
     },
   },

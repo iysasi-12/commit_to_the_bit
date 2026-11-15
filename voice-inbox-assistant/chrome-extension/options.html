@@ -8,8 +8,28 @@
   </head>
   <body>
     <main class="options">
-      <h1>Which Voice Inbox Assistant?</h1>
-      <form id="form">
+      <h1>Voice Inbox Assistant settings</h1>
+
+      <h2 id="pause-h">Pause between emails</h2>
+      <p class="hint">The silence after one email finishes and before the next starts, in &ldquo;All at once&rdquo;. It doesn&apos;t change how fast the voice talks. &ldquo;One at a time&rdquo; always waits for you.</p>
+      <form id="pause-form" aria-labelledby="pause-h">
+        <label>
+          <input type="radio" name="pause" value="slow" />
+          <span>Slow <small>1.4 seconds</small></span>
+        </label>
+        <label>
+          <input type="radio" name="pause" value="medium" />
+          <span>Medium <small>0.7 seconds (default)</small></span>
+        </label>
+        <label>
+          <input type="radio" name="pause" value="fast" />
+          <span>Fast <small>0.35 seconds</small></span>
+        </label>
+      </form>
+      <p id="pause-saved" role="status"></p>
+
+      <h2 id="server-h">Which Voice Inbox Assistant?</h2>
+      <form id="form" aria-labelledby="server-h">
         <label>
           <input type="radio" name="server" value="auto" />
           <span>Automatic (recommended) <small>vocamail.biz, or this computer if vocamail.biz isn't working</small></span>

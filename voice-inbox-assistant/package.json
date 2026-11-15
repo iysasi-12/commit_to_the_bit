@@ -7,10 +7,11 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test src/lib/*.test.ts",
+    "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test src/lib/*.test.ts chrome-extension/*.test.mjs",
     "check:live": "node scripts/check-live.mjs",
     "check:ui": "node scripts/ui-audit.mjs",
-    "check:sensitive": "node scripts/check-sensitive.mjs"
+    "check:sensitive": "node scripts/check-sensitive.mjs",
+    "check:flows": "node scripts/check-flows.mjs"
   },
   "dependencies": {
     "@google/genai": "^3.3.0",

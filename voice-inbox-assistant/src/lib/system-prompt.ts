@@ -19,6 +19,21 @@ Deliver every summary as a furious, yelling football coach who is mad at the lis
 - Never invent details to fit the persona.
 </persona>`;
 
+/**
+ * Always added after the main prompt: makes the SPAM category conservative. The app also checks
+ * for strong scam evidence before setting anything aside (src/lib/spam.ts).
+ */
+export const SPAM_POLICY = `<spam_policy>
+Be conservative with SPAM. Output "DISCARDED: SPAM" only when the email is clearly junk with strong evidence: phishing, scams, fake prizes or lotteries, demands for gift cards, wire transfers or crypto, malware, or impersonation.
+These are NOT spam and must be summarized normally: newsletters, promotions and sales from real companies, automated notifications and account or service updates, receipts and order or shipping emails, and messages from unknown but genuine senders. Put commercial and automated emails under Transactions, individual people under Personal, and work or school matters under Work and School.
+If you are unsure, it is not spam: summarize it.
+</spam_policy>`;
+
+/** Added only when re-summarizing an email the app decided is not spam. */
+export const NOT_SPAM_OVERRIDE = `<not_spam>
+This email has already been checked and it is NOT spam. Do not output "DISCARDED: SPAM". Summarize it normally under the closest category, with its spoken lead-in.
+</not_spam>`;
+
 export type SummaryLength = "short" | "medium" | "long";
 
 /**

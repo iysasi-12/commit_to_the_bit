@@ -12,7 +12,8 @@ const INBOX = [
   { id: "s1", from: "Dr. Elena Vance <evance@university.edu>", subject: "BIO-204: Lab Report 4 Extension", output: "Starting with Work and School.\n\nFor Biology 204 with Doctor Elena Vance, Lab Report 4 is due Monday, November 16th at 11:59 PM." },
   { id: "p1", from: "Jordan Taylor <jtaylor99@gmail.com>", subject: "Friday night?", output: "Next, Personal.\n\nJordan Taylor asked if you are still up for ramen on Friday at 7:00 PM and needs a reply." },
   { id: "w1", from: "Priya Shah <priya@acme-corp.com>", subject: "Sprint planning moved", output: "Starting with Work and School.\n\nPriya Shah moved sprint planning for the Atlas project to Thursday at 2:00 PM." },
-  { id: "spam", from: "MegaDeals <promo@megadeals.com>", subject: "70% OFF", output: "DISCARDED: SPAM" },
+  // The route only passes spamReasons when strong evidence confirmed it (src/lib/spam.ts).
+  { id: "spam", from: "Prize Desk <winner@prize-desk.example>", subject: "You have won a $500 gift card", output: "DISCARDED: SPAM", spamReasons: ["prize or lottery claim"] },
   { id: "t2", from: "Spotify <no-reply@spotify.com>", subject: "Your receipt", output: "Finally, Transactions.\n\nSpotify billed you eleven dollars and ninety-nine cents for Premium Individual." },
   { id: "s2", from: "Canvas <notifications@instructure.com>", subject: "CHEM 101 quiz posted", output: "Starting with Work and School. The Chemistry 101 quiz on stoichiometry opens Wednesday at 9:00 AM." },
   { id: "w2", from: "Marcus Lee <marcus@acme-corp.com>", subject: "Client deck", output: "Starting with Work and School.\n\nMarcus Lee needs the client deck for Brightline by Friday at noon." },
@@ -34,16 +35,45 @@ function fullQueue(): QueueItem[] {
   return withSpoken([...buildQueue(INBOX), NOTICE]);
 }
 
-const TABS: Array<"all" | Exclude<Group, "skipped">> = ["all", "work", "school", "personal", "transactions"];
-const listFor = (q: QueueItem[], tab: (typeof TABS)[number]) => (tab === "all" ? q : q.filter((x) => x.group === tab));
+const TABS: Array<"all" | Exclude<Group, "skipped" | "spam">> = ["all", "work", "school", "personal", "transactions"];
+// Like the player: the All tab never reads possible spam; it has its own tab.
+const listFor = (q: QueueItem[], tab: (typeof TABS)[number]) => (tab === "all" ? q.filter((x) => x.group !== "spam") : q.filter((x) => x.group === tab));
 
-test("queue is ordered Work, School, Personal, Transactions, then the sensitive notice; spam dropped", () => {
+test("queue is ordered Work, School, Personal, Transactions, possible spam, then the sensitive notice", () => {
   const q = fullQueue();
   assert.deepEqual(
     q.map((x) => x.id),
-    ["w1", "w2", "w3", "s1", "s2", "p1", "t1", "t2", "t3", "sensitive-notice"],
+    ["w1", "w2", "w3", "s1", "s2", "p1", "t1", "t2", "t3", "spam", "sensitive-notice"],
   );
-  assert.ok(!q.some((x) => x.id === "spam"));
+  const spam = q.find((x) => x.id === "spam")!;
+  assert.equal(spam.group, "spam");
+  assert.equal(spam.note, "possible-spam");
+  assert.deepEqual(spam.reasons, ["prize or lottery claim"]);
+  assert.equal(spam.summary, 'Possible spam from Prize Desk: "You have won a $500 gift card". I didn\'t read it.');
+});
+
+test("an AI failure or an unconfirmed spam answer is never dropped", () => {
+  const q = buildQueue([
+    { id: "fail", from: "Priya Shah <priya@acme.example>", subject: "Project deadline moved", output: null },
+    { id: "unsure", from: "Daily Digest <news@digest.example>", subject: "Your weekly newsletter", output: "DISCARDED: SPAM" },
+    { id: "empty", from: "Jordan <j@x.example>", subject: "Hi", output: "   " },
+  ]);
+  assert.deepEqual(q.map((x) => x.id).sort(), ["empty", "fail", "unsure"]);
+  for (const item of q) {
+    assert.equal(item.note, "unsummarized", item.id);
+    assert.notEqual(item.group, "spam", item.id);
+    assert.match(item.body, /^I couldn't summarize the email from .+ about ".+"\. You can read it in Gmail\.$/);
+  }
+  assert.equal(q.find((x) => x.id === "fail")!.group, "work", "keeps its likely section (deadline = work)");
+});
+
+test("School is only picked from whole words ('example' isn't 'exam', 'upgrade' isn't 'grade')", async () => {
+  const { workOrSchool } = await import("./triage.ts");
+  assert.equal(workOrSchool("Priya <p@acme.example>", "Project deadline", ""), "work");
+  assert.equal(workOrSchool("Slack <no-reply@slack.com>", "Upgrade your workspace", ""), "work");
+  assert.equal(workOrSchool("Canvas <notifications@instructure.com>", "Quiz posted", ""), "school");
+  assert.equal(workOrSchool("Dr. Vance <v@university.edu>", "Office hours", ""), "school");
+  assert.equal(workOrSchool("Prof Kim <k@x.com>", "Midterm grades are out", ""), "school");
 });
 
 test("no Gemini lead-in survives in any body", () => {
@@ -53,7 +83,7 @@ test("no Gemini lead-in survives in any body", () => {
 });
 
 test("All tab: one intro per section, First/Finally inside each section", () => {
-  const spoken = composeSpoken(fullQueue());
+  const spoken = composeSpoken(listFor(fullQueue(), "all"));
   assert.deepEqual(spoken.map((s) => s.slice(0, 50)), [
     "Starting with Work, three emails. First, Priya Sha",
     "Second, Marcus Lee needs the client deck for Brigh",
@@ -77,7 +107,7 @@ test("each tab gets its own intro and First/Finally for exactly the emails in it
     transactions: ["You have three transaction emails. First,", "Second,", "Finally,"],
   };
   for (const [tab, starts] of Object.entries(expected)) {
-    const spoken = composeSpoken(listFor(q, tab as Group as Exclude<Group, "skipped">));
+    const spoken = composeSpoken(listFor(q, tab as (typeof TABS)[number]));
     assert.equal(spoken.length, starts.length, tab);
     spoken.forEach((s, i) => assert.ok(s.startsWith(starts[i]!), `${tab}[${i}]: ${s}`));
   }

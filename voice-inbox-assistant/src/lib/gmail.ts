@@ -13,6 +13,8 @@ export interface ParsedEmail {
   /** The Date header as sent, e.g. "Sat, 14 Nov 2026 10:15:00 -0800". */
   sentDate: string;
   body: string;
+  /** Gmail's own labels (e.g. CATEGORY_PROMOTIONS, IMPORTANT). Read only; the scan never changes them. */
+  labels: string[];
 }
 
 const MAX_BODY_CHARS = 8000;
@@ -82,15 +84,21 @@ export function parseMessage(msg: gmail_v1.Schema$Message): ParsedEmail {
     subject: header(headers, "Subject") || "(no subject)",
     sentDate: header(headers, "Date") || new Date(Number(msg.internalDate ?? Date.now())).toUTCString(),
     body: body.length > MAX_BODY_CHARS ? `${body.slice(0, MAX_BODY_CHARS)}\n[email shortened]` : body,
+    labels: msg.labelIds ?? [],
   };
 }
 
 function mapGmailError(err: unknown): ApiError {
   const status = (err as { code?: number; status?: number }).code ?? (err as { status?: number }).status;
+  const message = String((err as { message?: unknown }).message ?? "");
   if (status === 401) return sessionExpired();
+  if (status === 403 && /insufficient|scope|permission/i.test(message)) {
+    return new ApiError(403, "GMAIL_NEEDS_PERMISSION", "To use Delete and Reorganize, sign out and sign back in, and allow Voice Inbox Assistant to manage your email.");
+  }
   if (status === 403) {
     return new ApiError(403, "GMAIL_FORBIDDEN", "Google didn't allow reading Gmail. Sign out and reconnect, and keep the Gmail permission box checked.");
   }
+  if (status === 404) return new ApiError(404, "GMAIL_NOT_FOUND", "That email or label no longer exists in Gmail.");
   if (status === 429) return new ApiError(429, "GMAIL_RATE_LIMITED", "Gmail is limiting requests right now. Wait a minute and try again.");
   return new ApiError(502, "GMAIL_ERROR", "Couldn't read your Gmail inbox. Please try again.");
 }
@@ -106,13 +114,62 @@ export interface InboxScan {
  * Reads the newest `count` inbox emails (read-only). Sensitive emails (banking, medical,
  * government, security codes) are detected from sender + subject only and never opened.
  */
-export async function fetchRecentEmails(accessToken: string, count: number, hours: TimeWindow | null = null): Promise<InboxScan> {
-  // "Last 8/16/48 hours": only emails after that exact moment (still at most `count`).
-  const q = gmailQuery(hours);
+function gmailClient(accessToken: string) {
   const oauth = new google.auth.OAuth2();
   oauth.setCredentials({ access_token: accessToken });
   // GMAIL_API_ROOT is for automated tests only (a fake Gmail on this computer); never set it on the server.
-  const gmail = google.gmail({ version: "v1", auth: oauth, ...(process.env.GMAIL_API_ROOT ? { rootUrl: process.env.GMAIL_API_ROOT } : {}) });
+  return google.gmail({ version: "v1", auth: oauth, ...(process.env.GMAIL_API_ROOT ? { rootUrl: process.env.GMAIL_API_ROOT } : {}) });
+}
+
+/** Gmail message and label ids are short URL-safe strings. */
+export function validGmailId(id: unknown, what = "email"): string {
+  if (typeof id !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(id)) throw new ApiError(400, "BAD_ID", `That ${what} id isn't valid.`);
+  return id;
+}
+
+/** Moves one email to Trash (recoverable in Gmail for 30 days). Only called when the person clicks Delete. */
+export async function trashMessage(accessToken: string, id: string): Promise<void> {
+  try {
+    await gmailClient(accessToken).users.messages.trash({ userId: "me", id });
+  } catch (err) {
+    throw mapGmailError(err);
+  }
+}
+
+export interface GmailLabel {
+  id: string;
+  name: string;
+}
+
+/** The person's own labels (Gmail's "folders"), sorted by name. */
+export async function listLabels(accessToken: string): Promise<GmailLabel[]> {
+  try {
+    const res = await gmailClient(accessToken).users.labels.list({ userId: "me" });
+    return (res.data.labels ?? [])
+      .filter((l) => l.type === "user" && l.id && l.name)
+      .map((l) => ({ id: l.id!, name: l.name! }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  } catch (err) {
+    throw mapGmailError(err);
+  }
+}
+
+/**
+ * "Reorganize": files the email under one of the person's labels and takes it out of the Inbox
+ * (like Gmail's "Move to"). Every other label it already has is kept.
+ */
+export async function moveMessage(accessToken: string, id: string, labelId: string): Promise<void> {
+  try {
+    await gmailClient(accessToken).users.messages.modify({ userId: "me", id, requestBody: { addLabelIds: [labelId], removeLabelIds: ["INBOX"] } });
+  } catch (err) {
+    throw mapGmailError(err);
+  }
+}
+
+export async function fetchRecentEmails(accessToken: string, count: number, hours: TimeWindow | null = null): Promise<InboxScan> {
+  // "Last 8/16/48 hours": only emails after that exact moment (still at most `count`).
+  const q = gmailQuery(hours);
+  const gmail = gmailClient(accessToken);
   try {
     return await scanWithoutSensitive<ParsedEmail>(
       {

@@ -19,7 +19,14 @@ Sign in with Google, click **Scan & Summarize Inbox**, and hear your newest emai
    - **All tab**: "Starting with Work, three emails. First, … Second, … Finally, …", "Next, School, two emails. First, … Finally, …", and "Lastly, Transactions, …". The sensitive-email note comes last.
    - **One tab**: "You have three transaction emails. First, … Finally, …".
    - A section with a single email gets no First/Finally.
-3. **Player**: audio is made only for the email being played (`POST /api/tts`). It's cached in the browser per email, voice and exact text, so **Replay** never costs credits. **Read all at once** (default on) plays the emails back to back; turn it off to stop after each one.
+3. **Player**: audio is made per email (`POST /api/tts`) and cached in the browser per email, voice and exact text, so **Replay** never costs credits.
+   - **Guided setup**: the Gmail **🎧 Summarize** button (or **Guided setup…**) asks, in order: One at a time or All at once → Short, Medium or Long → which voice (full names) → Start. Every step has **Back**.
+   - **All at once** reads every email back to back. While one plays, the next one's audio is prepared and loaded, so the silence between emails is exactly the **Pause between emails** setting.
+   - **One at a time** reads one email and then **waits** for **🗑 Delete** (moves it to Gmail's Trash), **Next →** (leaves it unchanged) or **📁 Reorganize…** (pick one of your Gmail labels: it gets that label and leaves the Inbox; other labels stay). The pause setting never skips this wait.
+   - **Pause between emails**: Slow **1,400 ms**, Medium **700 ms** (default), Fast **350 ms**. Before this setting existed, the measured gap was 1,350–1,500 ms, all of it waiting for the next audio (ElevenLabs takes 1.1–2.3 s); with the audio prepared in advance, real-voice gaps measured 1,452 / 741–751 / 388–418 ms. It changes the silence only, never the speaking rate. Saved in the browser and shared with the extension's Options page.
+   - Leaving (hiding the page or switching away from the Gmail tab) pauses and cancels any pending next email. Your last scan is kept in this browser for 3 hours, so reopening picks up where you left off; signing out clears it.
+   - Gmail is only changed when you click Delete or Reorganize. Accounts signed in before this feature need to **sign in again** once, to allow it.
+   - **Spam is conservative**. The AI's "spam" verdict only sets an email aside as **Possible spam** with strong evidence (prize/lottery claims, urgent "verify or lose your account" demands, gift-card/wire/crypto payment demands, inheritance offers). Starred or Important emails never count. Newsletters, promotions, receipts, automated mail and unknown senders are re-checked and summarized normally. Possible spam gets its own tab, is never read automatically, and is never moved or deleted. An AI failure shows as "I couldn't summarize…", never hidden. Gmail's own Spam folder isn't part of the Inbox, so it's never scanned.
 4. **Voice Box**: presets, **Design a voice** (`eleven_ttv_v3`), **Clone a voice** (record or upload), or paste a voice ID. Long voice names wrap instead of being cut off. The name shown always matches the voice that speaks: a voice renamed or deleted in ElevenLabs is picked up on the next load.
 5. **Character voices**: choosing **The Butler** or **The Angry Coach** also changes how the summaries are written (persona added after the exact system prompt).
 
@@ -62,6 +69,14 @@ npm.cmd run check:ui -- https://vocamail.biz
 - Both sign in as fake test users with the site's `AUTH_SECRET`: from `.env.local` for localhost, or from `.env.live` (git-ignored) for the live site.
 - `check:ui` also proves the styles were applied and the scripts run (a tab click must switch the player), and fails on any script error or failed CSS/JS load. To see it catch problems, run it with `UI_AUDIT_BLOCK=css` or `UI_AUDIT_BLOCK=js` (it must fail).
 
+**Browser flows** (headless Chrome, fake inbox and audio, real app code):
+
+```bash
+npm.cmd run check:flows -- http://localhost:3000
+```
+
+This covers the guided setup (Back, long voice names, choices really used), One at a time waiting, Delete / Next / Reorganize, the three pause levels (measured), cancelled timers on Stop/tab change/leaving, no duplicate audio, resume after reload, and the pause setting shared with the extension. The extension's Gmail-only rules have unit tests (`chrome-extension/background.test.mjs`, part of `npm.cmd test`).
+
 **Sensitive emails are never read**, proven end to end:
 
 ```bash
@@ -77,12 +92,17 @@ The app under test must be started with `GMAIL_API_ROOT=http://127.0.0.1:4010/` 
 
 ## Chrome extension (Gmail button)
 
-The `chrome-extension/` folder adds a **🎧 AI Summary** button to Gmail that opens the app in Chrome's side panel.
+The `chrome-extension/` folder adds a **🎧 Summarize** button to Gmail that opens the app in Chrome's side panel, **on that Gmail tab only**.
 
-1. Start the app (`npm.cmd run dev`), or use the hosted site once it's live.
+1. Start the app (`npm.cmd run dev`), or use the hosted site.
 2. In Chrome, go to `chrome://extensions`, turn on **Developer mode**, click **Load unpacked** and choose `voice-inbox-assistant\chrome-extension`. After an update, click the reload icon on the extension.
-3. Open the app in a normal tab and **sign in with Google** once (Google won't show sign-in inside a side panel).
-4. In Gmail, click **🎧 AI Summary** and pick Short, Medium or Long.
+3. Open the app in a normal tab and **sign in with Google** once. Google won't show sign-in inside a side panel; if you sign in from the panel's link, the panel refreshes itself afterwards.
+4. In Gmail, click **🎧 Summarize** and follow the guided setup.
+
+The panel only exists on `https://mail.google.com/*` (Chrome tab-specific side panels; there is no global panel):
+- Each Gmail tab has its own panel.
+- Switching to a non-Gmail tab, navigating the tab away from Gmail, or closing it closes the panel. Playback pauses first, and the queue is kept: reopen it on Gmail to resume.
+- The **Options** page holds **Pause between emails** (shared with the app) and the server choice.
 
 **Which server?** Right-click the extension icon → **Options**. For localhost only, comment out the `LIVE` lines in `chrome-extension/panel.js` and set `DEFAULT_MODE = "local"` there and in `options.js`. The choices:
 - *Automatic*: vocamail.biz, or this computer if vocamail.biz isn't healthy. It requires `/api/health` to say `"app": "voice-inbox-assistant"`, so it also switches when the app has crashed or a different app is on the domain.
@@ -155,6 +175,7 @@ Open http://localhost:3000. The older Inbox Voice app in the parent folder also 
 - Google shows an "unverified app" screen; click **Continue**.
 - Sign-ins expire after 7 days, and the app then shows the reconnect banner.
 - Redirect URIs (**Clients**): `http://localhost:3000/api/auth/callback/google`, and for the server `https://vocamail.biz/api/auth/callback/google`.
+- The app asks for `gmail.modify` (read, plus Trash and labels for Delete/Reorganize; never permanent deletion). Add it under **Data Access** too, which Google's review will need. People who signed in before it was added must sign in again to allow Delete and Reorganize; until then those buttons explain this and **Next** still works.
 
 ### Any Google user (production)
 

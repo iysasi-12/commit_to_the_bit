@@ -2,7 +2,7 @@ import "server-only";
 import { ApiError as GenAiError, GoogleGenAI } from "@google/genai";
 import { ApiError } from "@/lib/errors";
 import { isModelPaused, pauseModel } from "@/lib/model-pause";
-import { BUTLER_PERSONA, COACH_PERSONA, LENGTH_RULES, SYSTEM_PROMPT, type SummaryLength } from "@/lib/system-prompt";
+import { BUTLER_PERSONA, COACH_PERSONA, LENGTH_RULES, NOT_SPAM_OVERRIDE, SPAM_POLICY, SYSTEM_PROMPT, type SummaryLength } from "@/lib/system-prompt";
 
 export type Persona = "standard" | "butler" | "coach";
 
@@ -11,13 +11,15 @@ const PERSONAS: Record<Persona, string> = { standard: "", butler: BUTLER_PERSONA
 export interface SummaryOptions {
   persona: Persona;
   length: SummaryLength;
+  /** Second pass for an email the app decided isn't spam: tells Gemini not to discard it. */
+  notSpam?: boolean;
 }
 
 const DEFAULT_OPTIONS: SummaryOptions = { persona: "standard", length: "medium" };
 
-/** The exact prompt, plus the optional persona and length add-ons. */
+/** The exact prompt, plus the conservative spam policy and the optional add-ons. */
 function instructions(opts: SummaryOptions): string {
-  return [SYSTEM_PROMPT, PERSONAS[opts.persona], LENGTH_RULES[opts.length]].filter(Boolean).join("\n\n");
+  return [SYSTEM_PROMPT, SPAM_POLICY, opts.notSpam ? NOT_SPAM_OVERRIDE : "", PERSONAS[opts.persona], LENGTH_RULES[opts.length]].filter(Boolean).join("\n\n");
 }
 import { wrapEmail } from "@/lib/triage";
 import type { ParsedEmail } from "@/lib/gmail";

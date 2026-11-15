@@ -4,7 +4,7 @@ import { connection } from "next/server";
 
 export const metadata: Metadata = { title: "Privacy policy · Voice Inbox Assistant" };
 
-const UPDATED = "November 15, 2026";
+const UPDATED = "November 16, 2026";
 
 /** Public privacy policy (Google's OAuth verification requires one on the app's domain). */
 export default async function Privacy() {
@@ -34,8 +34,13 @@ export default async function Privacy() {
       <ul className={`${p} list-disc space-y-2 pl-5`}>
         <li>Your name and email address, to show who is signed in and to keep your saved voices private to you.</li>
         <li>
-          Read-only access to Gmail (<code>gmail.readonly</code>). Only when you press Scan, the app reads the sender, subject, date and text of the number of recent
-          inbox messages you choose. It cannot send, change or delete email.
+          Gmail access (<code>gmail.modify</code>). Only when you press Scan, the app reads the sender, subject, date, labels and text of the number of recent inbox
+          messages you choose.
+        </li>
+        <li>
+          Only when you click <strong>Delete</strong> on an email, the app moves that one email to Gmail&apos;s Trash (you can restore it there for 30 days). Only when
+          you pick a label under <strong>Reorganize</strong>, it files that one email under that label and takes it out of the Inbox. The app never deletes anything
+          permanently, never sends email, and never changes an email on its own: not for spam, and not when a summary fails.
         </li>
         <li>
           Sensitive emails (for example banking, medical, government, or password and security-code messages) are recognized from the sender and subject only. Their text
@@ -72,7 +77,11 @@ export default async function Privacy() {
           Your Google sign-in tokens are kept in an encrypted, HttpOnly cookie in your browser so you stay signed in. Signing out deletes it.
         </li>
         <li>Generated audio is kept only in your browser tab and is discarded when you scan again or close the tab.</li>
-        <li>Your settings (chosen voice, summary length) are saved in your browser&apos;s local storage.</li>
+        <li>
+          So you can pick up where you left off (for example after switching away from Gmail), your latest scan&apos;s summaries are kept in this browser for up to
+          three hours. Signing out or starting a new scan removes them.
+        </li>
+        <li>Your settings (chosen voice, summary length, reading mode, pause between emails) are saved in your browser.</li>
         <li>
           Custom voices you create are stored in the app&apos;s ElevenLabs account, marked as yours so that no other user can see, play or remove them. You can delete
           them at any time with Remove in the Voice Box.

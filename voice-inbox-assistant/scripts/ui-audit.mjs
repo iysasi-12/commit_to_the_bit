@@ -40,7 +40,7 @@ const SESSION = await encode({
   secret,
   salt: "authjs.session-token",
   maxAge: 3600,
-  token: { name: "UI Audit", email: "ui.audit@example.com", sub: "ui-audit", access_token: "placeholder-not-a-google-token", expires_at: Math.floor(Date.now() / 1000) + 3600 },
+  token: { name: "UI Audit", email: "ui.audit@example.com", sub: "ui-audit", access_token: "placeholder-not-a-google-token", expires_at: Math.floor(Date.now() / 1000) + 3600, can_modify: true },
 });
 
 const CHROME =
@@ -145,6 +145,7 @@ const MOCK = String.raw`(() => {
     B("personal", "p1", "Jordan Taylor <jtaylor99@gmail.com>", "Friday night?", "Jordan Taylor asked if you are still up for ramen on Friday at 7:00 PM and needs a reply."),
     B("transactions", "t1", "Amazon.com <auto-confirm@amazon.com>", "Your order has shipped", "Your Amazon order for the Logitech MX Master 3S Wireless Mouse has shipped and arrives Tuesday, November 17th."),
     B("transactions", "t2", "Spotify <no-reply@spotify.com>", "Your receipt", "Spotify billed you eleven dollars and ninety-nine cents for Premium Individual."),
+    { ...B("spam", "x1", "Lottery Board <win@intl-lotto.example>", "Congratulations, you have won!", "Possible spam from Lottery Board: \"Congratulations, you have won!\". I didn't read it."), note: "possible-spam", reasons: ["prize or lottery claim"] },
     B("skipped", "sensitive-notice", "Voice Inbox Assistant", "Sensitive emails skipped", "One more thing. I skipped two sensitive emails: one banking or financial email and one medical or health email."),
   ];
   function wav(sec) { const rate = 8000, n = Math.floor(rate * sec), b = new ArrayBuffer(44 + n), v = new DataView(b); const s = (o, t) => [...t].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0))); s(0, "RIFF"); v.setUint32(4, 36 + n, true); s(8, "WAVE"); s(12, "fmt "); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, rate, true); v.setUint32(28, rate, true); v.setUint16(32, 1, true); v.setUint16(34, 8, true); s(36, "data"); v.setUint32(40, n, true); for (let i = 0; i < n; i++) v.setUint8(44 + i, 128); return new Blob([b], { type: "audio/wav" }); }
@@ -160,6 +161,8 @@ const MOCK = String.raw`(() => {
       json.custom = [LONG, ...json.custom];
       return new Response(JSON.stringify(json), { status: 200, headers: { "Content-Type": "application/json" } });
     }
+    if (url.includes("/api/labels")) return new Response(JSON.stringify({ labels: [{ id: "Label_1", name: "A-very-long-label-name-for-client-projects-2026" }, { id: "Label_2", name: "Receipts" }, { id: "Label_3", name: "Work" }] }), { status: 200, headers: { "Content-Type": "application/json" } });
+    if (/\/api\/emails\/[^/]+\/(trash|move)/.test(url)) return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "Content-Type": "application/json" } });
     if (url.includes("/api/emails")) {
       await new Promise((r) => setTimeout(r, 200));
       return new Response(JSON.stringify({ queue, stats: { fetched: 10, spam: 1, failed: 0, sensitive: 2, sensitiveByKind: { financial: 1, medical: 1 } } }), { status: 200, headers: { "Content-Type": "application/json" } });
@@ -265,12 +268,35 @@ for (const [width, height] of SIZES) {
     const spoken = await evaluate(`document.querySelector("#player-h")?.closest("section")?.querySelector("p.text-lg")?.textContent ?? ""`);
     if (!switched) issues.push("clicking the Work tab didn't switch the player (scripts not running?)");
     else if (!spoken.startsWith("You have two work emails. First,")) issues.push(`Work tab spoken text is wrong: "${spoken.slice(0, 60)}"`);
+    // Delete / Next / Reorganize, and the label picker (with a very long label name).
+    await evaluate(`[...document.querySelectorAll("button")].find((b) => b.textContent.includes("Reorganize"))?.click()`);
+    if (!(await waitFor(`!!document.querySelector("[aria-label='Choose where to move this email'] li button")`, 5000))) issues.push("Reorganize label picker didn't open");
+    await evaluate(`document.querySelector("[aria-label='Choose where to move this email']")?.scrollIntoView({ block: "center" })`);
+    await sleep(200);
+    await shot("3-reorganize");
+    views["player actions + Reorganize"] = await evaluate(AUDIT);
+    await evaluate(`[...document.querySelectorAll("[role=tab]")].find((b) => b.textContent.startsWith("Possible spam"))?.click()`);
+    await sleep(300);
+    views["Possible spam tab"] = await evaluate(AUDIT);
   }
   for (const label of ["Design a voice", "Clone a voice"]) {
     await evaluate(`[...document.querySelectorAll("[role=tab]")].find((b) => b.textContent === ${JSON.stringify(label)})?.click()`);
     await sleep(300);
     views[label] = await evaluate(AUDIT);
   }
+  // The guided setup the Gmail button opens, all four steps.
+  await send("Page.navigate", { url: `${BASE}/?setup=1` });
+  if (await waitFor(`!!document.querySelector("#setup-h")`, 15000)) {
+    for (let step = 1; step <= 4; step++) {
+      if (step === 3) await waitFor(`!!document.querySelector("[aria-label=Voices] li")`, 15000);
+      await evaluate(`document.querySelector("#setup-h").scrollIntoView({ block: "start" })`);
+      await sleep(200);
+      if (step === 3) await shot("4-setup-voices");
+      views[`setup step ${step}`] = await evaluate(AUDIT);
+      if (step < 4) await evaluate(`[...document.querySelectorAll("[role=dialog] button")].find((b) => b.textContent.trim() === "Next →")?.click()`);
+      await sleep(250);
+    }
+  } else issues.push("guided setup didn't open from ?setup=1");
   for (const [view, a] of Object.entries(views)) {
     if (a.sideways) issues.push(`${view}: page scrolls sideways`);
     if (a.offscreen.length) issues.push(`${view}: off-screen ${a.offscreen.join("; ")}`);
