@@ -43,7 +43,21 @@ Everyone signs in with their own Google account, so each person only ever reads 
 npm.cmd test
 ```
 
-Runs the spoken-order and voice-ownership unit tests (no network, no keys). Set `PRINT=1` to print exactly what is spoken for All and each tab.
+Runs the spoken-order, voice-ownership and Gemini-quota unit tests (no network, no keys). Set `PRINT=1` to print exactly what is spoken for All and each tab.
+
+Against a running site (no Gemini or ElevenLabs credits used):
+
+```bash
+npm.cmd run check:live -- https://vocamail.biz 3
+```
+
+```bash
+npm.cmd run check:ui -- https://vocamail.biz
+```
+
+- `check:live` runs 18 checks per round: HTTPS and `www` redirects, health and commit, pages, sign-in callback, signed-out refusals, and signed-in voice privacy using fake test users. Use `http://localhost:3000` for your computer.
+- `check:ui` opens the app in headless Chrome at 13 phone, tablet and desktop sizes (portrait and landscape) with fake inbox data, and fails on sideways scrolling, cut-off text or voice names, or small tap targets. Screenshots go to your temp folder.
+- Both sign in as fake test users with the site's `AUTH_SECRET`: from `.env.local` for localhost, or from `.env.live` (git-ignored) for the live site.
 
 ## Chrome extension (Gmail button)
 
@@ -54,9 +68,33 @@ The `chrome-extension/` folder adds a **🎧 AI Summary** button to Gmail that o
 3. Open the app in a normal tab and **sign in with Google** once (Google won't show sign-in inside a side panel).
 4. In Gmail, click **🎧 AI Summary** and pick Short, Medium or Long.
 
-**Which server?** Right-click the extension icon → **Options**: *This computer* (http://localhost:3000, the default) or *vocamain.biz*.
+**Which server?** Right-click the extension icon → **Options**:
+- *Automatic* (default): vocamail.biz, or this computer (http://localhost:3000) if vocamail.biz doesn't answer within 4 seconds.
+- *vocamail.biz only*.
+- *This computer only*.
+
+Both addresses are at the top of `chrome-extension/panel.js`.
 
 If the panel says you're signed out, Chrome may be blocking third-party cookies: allow them for the app's site, or use the app in a normal tab.
+
+## Presentation backup: run it on this computer
+
+If vocamail.biz isn't up, the same app runs on your laptop:
+
+1. Start it. For a quicker, steadier app, build it first (`npm.cmd run build`) and then run `npm.cmd start`; you can ignore its "standalone" warning. Or simply:
+   ```bash
+   npm.cmd run dev
+   ```
+2. Open http://localhost:3000 in a normal Chrome tab and sign in with Google. The presenter's Gmail must be a **test user** in Google Cloud (Audience → Test users).
+3. The extension's *Automatic* mode switches to this computer by itself. No code changes are needed.
+4. Check it before you present:
+   ```bash
+   npm.cmd run check:live -- http://localhost:3000 3
+   ```
+
+`.env.local` keeps the live-site addresses as commented lines under the active localhost ones. Leave them commented on your computer.
+
+**Gemini's free tier allows only about 20 requests a day on the main model**, and every email uses one, so two 10-email scans use it up. When that happens the app switches to `GEMINI_FALLBACK_MODEL` on its own, and the summaries are just as usable. For a presentation, turn on billing for the Gemini key's Google Cloud project (each email costs a fraction of a cent), or scan 5 emails at a time.
 
 ## Run it locally
 
@@ -84,7 +122,7 @@ Open http://localhost:3000. The older Inbox Voice app in the parent folder also 
 |---|---|
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Google Cloud OAuth client (below) |
 | `NEXTAUTH_SECRET`, `AUTH_SECRET` | Any 32+ character random string, the same for both. Changing it signs everyone out and changes voice owner tags. |
-| `NEXTAUTH_URL`, `AUTH_URL` | `http://localhost:3000` locally; `https://vocamain.biz` on the server |
+| `NEXTAUTH_URL`, `AUTH_URL` | `http://localhost:3000` locally; `https://vocamail.biz` on the server |
 | `GEMINI_API_KEY` | https://aistudio.google.com/apikey |
 | `GEMINI_MODEL`, `GEMINI_FALLBACK_MODEL` | Optional. Defaults `gemini-3.8-flash`, then `gemini-3.5-flash-lite` if the first is busy. |
 | `ELEVENLABS_API_KEY` | ElevenLabs → Developers → API Keys. Allow Text to Speech, Voices (write) and Voice Generation. |
@@ -101,18 +139,18 @@ Open http://localhost:3000. The older Inbox Voice app in the parent folder also 
 - Only the test users listed under **Google Auth Platform → Audience** can sign in (up to 100). Add each person's Gmail there.
 - Google shows an "unverified app" screen; click **Continue**.
 - Sign-ins expire after 7 days, and the app then shows the reconnect banner.
-- Redirect URIs (**Clients**): `http://localhost:3000/api/auth/callback/google`, and for the server `https://vocamain.biz/api/auth/callback/google`.
+- Redirect URIs (**Clients**): `http://localhost:3000/api/auth/callback/google`, and for the server `https://vocamail.biz/api/auth/callback/google`.
 
 ### Any Google user (production)
 
 `gmail.readonly` is a **restricted** scope. Before people outside your test list can sign in, Google requires:
 
-1. A verified domain (`vocamain.biz` in Search Console) listed under **Branding → Authorized domains**, with the home page `https://vocamain.biz` and privacy policy `https://vocamain.biz/privacy`.
+1. A verified domain (`vocamail.biz` in Search Console) listed under **Branding → Authorized domains**, with the home page `https://vocamail.biz` and privacy policy `https://vocamail.biz/privacy`.
 2. **Publish app** under **Audience**, then submit **restricted-scope verification** in **Verification Center** (scope justification and a demo video of the sign-in and scan).
 3. A yearly third-party **security assessment** (CASA). Plan for several weeks.
 4. Gemini on a **paid** API tier (billing enabled on the key's project). On the free tier Google may use prompts to improve its products, which doesn't fit Gmail's Limited Use rules or the privacy policy.
 
-## Deploying to Vultr (vocamain.biz)
+## Deploying to Vultr (vocamail.biz)
 
 Deploys are automatic: every push to `main` runs the repo's CI (`.github/workflows/ci.yml`). When this app's lint, unit tests, build and Docker smoke test pass, the **Deploy Voice Inbox Assistant to Vultr** job:
 
@@ -126,8 +164,8 @@ You can also deploy by hand: **Actions → CI → Run workflow** on `main`.
 ### One-time setup
 
 1. **Server**: Ubuntu on Vultr with Docker (`curl -fsSL https://get.docker.com | sh`), firewall open on TCP 22, 80 and 443, and the deploy key's public half in `~/.ssh/authorized_keys` of `VULTR_USER`.
-2. **DNS**: at the registrar for `vocamain.biz`, add **A records** for `vocamain.biz` and `www.vocamain.biz` pointing at the server's IP.
-3. **Google Cloud → Clients**: add the redirect URI `https://vocamain.biz/api/auth/callback/google`.
+2. **DNS**: at the registrar for `vocamail.biz`, add **A records** for `vocamail.biz` and `www.vocamail.biz` pointing at the server's IP.
+3. **Google Cloud → Clients**: add the redirect URI `https://vocamail.biz/api/auth/callback/google`.
 4. **GitHub → repo Settings → Secrets and variables → Actions**:
 
 | Secret | Value |
@@ -139,7 +177,7 @@ You can also deploy by hand: **Actions → CI → Run workflow** on `main`.
 
 | Variable (Variables tab) | Value |
 |---|---|
-| `APP_DOMAIN` | Optional, default `vocamain.biz` |
+| `APP_DOMAIN` | Optional, default `vocamail.biz` |
 | `ADMIN_EMAILS` | Your Google email(s), comma-separated |
 | `CONTACT_EMAIL` | Contact shown on `/privacy` |
 | `VOICES_PER_USER`, `GEMINI_MODEL`, `GEMINI_FALLBACK_MODEL`, `ELEVENLABS_MODEL` | Optional overrides |
@@ -153,7 +191,7 @@ node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
 ### Checking and managing the server
 
 ```bash
-curl -s https://vocamain.biz/api/health
+curl -s https://vocamail.biz/api/health
 ```
 
 The `commit` it reports should equal the commit shown for the latest green CI run. On the server:

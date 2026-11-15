@@ -158,7 +158,7 @@ jobs:
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     environment:
       name: production
-      url: https://${{ vars.APP_DOMAIN || 'vocamain.biz' }}
+      url: https://${{ vars.APP_DOMAIN || 'vocamail.biz' }}
     concurrency:
       group: deploy-production
       cancel-in-progress: false
@@ -166,7 +166,7 @@ jobs:
       contents: read
       packages: write
     env:
-      DOMAIN: ${{ vars.APP_DOMAIN || 'vocamain.biz' }}
+      DOMAIN: ${{ vars.APP_DOMAIN || 'vocamail.biz' }}
     steps:
       - uses: actions/checkout@v4
 

@@ -1,6 +1,7 @@
 import "server-only";
 import { ApiError as GenAiError, GoogleGenAI } from "@google/genai";
 import { ApiError } from "@/lib/errors";
+import { isModelPaused, pauseModel } from "@/lib/model-pause";
 import { BUTLER_PERSONA, COACH_PERSONA, LENGTH_RULES, SYSTEM_PROMPT, type SummaryLength } from "@/lib/system-prompt";
 
 export type Persona = "standard" | "butler" | "coach";
@@ -43,6 +44,13 @@ function mapGeminiError(err: unknown): ApiError {
   if (err instanceof GenAiError) {
     if (err.status === 401 || err.status === 403) return new ApiError(503, "GEMINI_KEY", "Gemini rejected the API key. Check GEMINI_API_KEY in .env.local.");
     if (err.status === 404) return new ApiError(503, "GEMINI_MODEL", "Gemini doesn't recognize the model name. Check GEMINI_MODEL in .env.local.");
+    if (err.status === 429 && /PerDay/i.test(err.message)) {
+      return new ApiError(
+        429,
+        "GEMINI_DAILY_LIMIT",
+        "Gemini's free daily limit is used up (it resets at midnight Pacific time). To lift it, turn on billing for the Gemini API key's Google Cloud project.",
+      );
+    }
     if (err.status === 429) return new ApiError(429, "GEMINI_LIMIT", "Gemini's usage limit was reached. Wait a minute and try again.");
     return new ApiError(503, "GEMINI_BUSY", "Gemini is busy right now. Wait a few seconds and try again.");
   }
@@ -58,14 +66,33 @@ async function generate(model: string, email: ParsedEmail, opts: SummaryOptions)
   return (res.text ?? "").trim();
 }
 
+/** Calls one model; on "out of quota" it remembers to skip that model until Google's retry time. */
+async function generateOrPause(model: string, email: ParsedEmail, opts: SummaryOptions): Promise<string> {
+  try {
+    return await generate(model, email, opts);
+  } catch (err) {
+    if (err instanceof GenAiError && err.status === 429) pauseModel(model, err.message);
+    throw err;
+  }
+}
+
 /** Summarizes one email with the exact system prompt; returns "DISCARDED: SPAM" for spam. */
 export async function summarizeEmail(email: ParsedEmail, opts: SummaryOptions = DEFAULT_OPTIONS): Promise<string> {
+  const hasFallback = Boolean(FALLBACK_MODEL) && FALLBACK_MODEL !== MODEL;
+  // The main model ran out of quota recently: don't spend a request on it, use the fallback.
+  if (hasFallback && isModelPaused(MODEL)) {
+    try {
+      return await generateOrPause(FALLBACK_MODEL, email, opts);
+    } catch (err) {
+      throw mapGeminiError(err);
+    }
+  }
   try {
-    return await generate(MODEL, email, opts);
+    return await generateOrPause(MODEL, email, opts);
   } catch (err) {
-    if (FALLBACK_MODEL && FALLBACK_MODEL !== MODEL && isBusy(err)) {
+    if (hasFallback && isBusy(err) && !isModelPaused(FALLBACK_MODEL)) {
       try {
-        return await generate(FALLBACK_MODEL, email, opts);
+        return await generateOrPause(FALLBACK_MODEL, email, opts);
       } catch (fallbackErr) {
         throw mapGeminiError(fallbackErr);
       }

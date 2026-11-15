@@ -11,7 +11,8 @@ import { accessFor, cleanDescription, listAccountVoices, ownerOf, voicesPerUser,
 export async function GET(req: Request) {
   try {
     const me = await requireViewer(req);
-    const voices = await listAccountVoices({ fresh: true });
+    // Cached for up to a minute; creating or deleting a voice in the app clears the cache at once.
+    const voices = await listAccountVoices();
     const view = (v: AccountVoice) => {
       const access = accessFor(v, me);
       return {
