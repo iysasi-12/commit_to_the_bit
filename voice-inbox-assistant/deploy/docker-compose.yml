@@ -1,0 +1,30 @@
+# Runs on the Vultr server in /opt/voice-inbox. The CI deploy job copies this file, the
+# Caddyfile and a generated .env there, then runs `docker compose up -d`.
+name: voice-inbox
+services:
+  app:
+    image: ${APP_IMAGE:?set by the deploy job}
+    restart: unless-stopped
+    env_file: .env
+    expose:
+      - "3000"
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN: ${APP_DOMAIN:?set by the deploy job}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  caddy-data:
+  caddy-config:

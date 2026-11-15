@@ -91,7 +91,8 @@ Open http://localhost:3000. The older Inbox Voice app in the parent folder also 
 | `ELEVENLABS_MODEL` | Optional, default `eleven_v4`. `eleven_flash_v2_5` is faster and cheaper but flatter. |
 | `ADMIN_EMAILS` | Comma-separated Google emails that can manage shared and older voices. |
 | `VOICES_PER_USER` | Optional, default 3. |
-| `CONTACT_EMAIL` | Shown on `/privacy`. Set it before `npm run build`, because the page is built once. |
+| `VOICE_OWNER_SECRET` | Random string behind the private voice owner tags. Must match the server's, or voices made here won't show up for their owner on the live site. |
+| `CONTACT_EMAIL` | Shown on `/privacy` as the contact for questions and deletion requests. |
 
 ## Google Cloud: letting people sign in
 
@@ -113,24 +114,50 @@ Open http://localhost:3000. The older Inbox Voice app in the parent folder also 
 
 ## Deploying to Vultr (vocamain.biz)
 
-1. Create an Ubuntu 24.04 Vultr server. At your domain registrar, add **A records** for `vocamain.biz` and `www.vocamain.biz` pointing at its IP.
-2. Make a production env file (a copy of `.env.local` with `AUTH_URL` and `NEXTAUTH_URL` set to `https://vocamain.biz`) and copy it to the server. It never goes in Git:
-   ```bash
-   scp .env.production root@SERVER_IP:/etc/voice-inbox.env
-   ```
-3. Copy and run the setup script. It installs Node 24 and Caddy (automatic HTTPS), clones `main`, runs the tests, builds, and starts a systemd service on 127.0.0.1:3000. The first run prints a deploy key to add on GitHub (repo → Settings → Deploy keys, read-only), because the repo is private. Run it again after adding the key.
-   ```bash
-   scp deploy/setup-vultr.sh root@SERVER_IP:/root/
-   ```
-   ```bash
-   ssh root@SERVER_IP "bash /root/setup-vultr.sh"
-   ```
-4. Add `https://vocamain.biz/api/auth/callback/google` as a redirect URI in Google Cloud **Clients**.
-5. **Check the server runs the tested commit:** these two must match.
-   ```bash
-   curl -s https://vocamain.biz/api/health
-   ```
-   ```bash
-   git rev-parse HEAD
-   ```
-6. To update later, push to `main` and run step 3's `ssh` command again.
+Deploys are automatic: every push to `main` runs the repo's CI (`.github/workflows/ci.yml`). When this app's lint, unit tests, build and Docker smoke test pass, the **Deploy Voice Inbox Assistant to Vultr** job:
+
+1. Builds the Docker image (`Dockerfile`, Next.js standalone) and pushes it to `ghcr.io/<owner>/voice-inbox-assistant`, tagged with the commit.
+2. Copies `deploy/docker-compose.yml`, `deploy/Caddyfile` and a generated `.env` to `/opt/voice-inbox` on the server over SSH. If the older VocaMail stack is running in `/opt/vocamail`, it is stopped first, because only one Caddy can own ports 80 and 443.
+3. Starts the app with Caddy in front (automatic HTTPS for the domain and `www`).
+4. **Fails unless `https://<domain>/api/health` reports the exact commit that was tested**, so a green deploy means the live site runs the tested version.
+
+You can also deploy by hand: **Actions → CI → Run workflow** on `main`.
+
+### One-time setup
+
+1. **Server**: Ubuntu on Vultr with Docker (`curl -fsSL https://get.docker.com | sh`), firewall open on TCP 22, 80 and 443, and the deploy key's public half in `~/.ssh/authorized_keys` of `VULTR_USER`.
+2. **DNS**: at the registrar for `vocamain.biz`, add **A records** for `vocamain.biz` and `www.vocamain.biz` pointing at the server's IP.
+3. **Google Cloud → Clients**: add the redirect URI `https://vocamain.biz/api/auth/callback/google`.
+4. **GitHub → repo Settings → Secrets and variables → Actions**:
+
+| Secret | Value |
+|---|---|
+| `VULTR_HOST`, `VULTR_USER`, `VULTR_SSH_KEY` | Server IP, SSH user (e.g. `root`), and the private deploy key (whole file) |
+| `AUTH_SECRET` | A new 32+ character random string for the live site (not the one on your computer) |
+| `VOICE_OWNER_SECRET` | The **same** value as `VOICE_OWNER_SECRET` in your `.env.local`, so people keep their voices |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GEMINI_API_KEY`, `ELEVENLABS_API_KEY` | Same as in `.env.local` |
+
+| Variable (Variables tab) | Value |
+|---|---|
+| `APP_DOMAIN` | Optional, default `vocamain.biz` |
+| `ADMIN_EMAILS` | Your Google email(s), comma-separated |
+| `CONTACT_EMAIL` | Contact shown on `/privacy` |
+| `VOICES_PER_USER`, `GEMINI_MODEL`, `GEMINI_FALLBACK_MODEL`, `ELEVENLABS_MODEL` | Optional overrides |
+
+Generate a random secret with:
+
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
+```
+
+### Checking and managing the server
+
+```bash
+curl -s https://vocamain.biz/api/health
+```
+
+The `commit` it reports should equal the commit shown for the latest green CI run. On the server:
+
+```bash
+cd /opt/voice-inbox && docker compose ps && docker compose logs --tail=50 app
+```

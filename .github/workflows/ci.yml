@@ -16,6 +16,8 @@ permissions:
 
 env:
   IMAGE: ghcr.io/${{ github.repository_owner }}/vocamail
+  # The Next.js app (voice-inbox-assistant/) is the one deployed to the live domain.
+  WEB_IMAGE: ghcr.io/${{ github.repository_owner }}/voice-inbox-assistant
 
 jobs:
   test:
@@ -82,34 +84,107 @@ jobs:
         if: always()
         run: docker logs app || true
 
-  deploy:
-    name: Deploy to Vultr
+  web-test:
+    name: "Voice Inbox Assistant: lint, test, build"
     runs-on: ubuntu-latest
-    needs: [test, docker]
+    defaults:
+      run:
+        working-directory: voice-inbox-assistant
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: voice-inbox-assistant/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit tests (spoken order, voice ownership)
+        run: npm test
+
+      - name: Build (includes the TypeScript check)
+        run: npm run build
+
+  web-docker:
+    name: "Voice Inbox Assistant: image builds and boots"
+    runs-on: ubuntu-latest
+    needs: web-test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: voice-inbox-assistant
+          load: true
+          tags: voice-inbox:ci
+          build-args: APP_COMMIT=${{ github.sha }}
+          cache-from: type=gha,scope=voice-inbox
+          cache-to: type=gha,mode=max,scope=voice-inbox
+
+      - name: Smoke test (no keys)
+        run: |
+          docker run -d --name web -p 3000:3000 \
+            -e AUTH_SECRET="$(openssl rand -base64 48)" \
+            -e AUTH_URL=http://localhost:3000 \
+            voice-inbox:ci
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:3000/api/health >/dev/null 2>&1; then break; fi
+            sleep 1
+          done
+          health="$(curl -fsS http://localhost:3000/api/health)"
+          echo "$health"
+          test "$(echo "$health" | jq -r .commit)" = "$GITHUB_SHA" || { echo "::error::Image reports the wrong commit"; exit 1; }
+          curl -fsS http://localhost:3000/ >/dev/null || { echo "::error::Home page failed"; exit 1; }
+          curl -fsS http://localhost:3000/privacy | grep -q "Limited Use" || { echo "::error::Privacy page failed"; exit 1; }
+          echo "App is up and serving commit $GITHUB_SHA"
+
+      - name: Container logs
+        if: always()
+        run: docker logs web || true
+
+  deploy:
+    name: Deploy Voice Inbox Assistant to Vultr
+    runs-on: ubuntu-latest
+    needs: [web-test, web-docker]
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     environment:
       name: production
-      url: https://${{ vars.VOCAMAIL_DOMAIN }}
+      url: https://${{ vars.APP_DOMAIN || 'vocamain.biz' }}
     concurrency:
       group: deploy-production
       cancel-in-progress: false
     permissions:
       contents: read
       packages: write
+    env:
+      DOMAIN: ${{ vars.APP_DOMAIN || 'vocamain.biz' }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Check required settings
         env:
-          DOMAIN: ${{ vars.VOCAMAIL_DOMAIN }}
           HOST: ${{ secrets.VULTR_HOST }}
           USER: ${{ secrets.VULTR_USER }}
           KEY: ${{ secrets.VULTR_SSH_KEY }}
-          SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
+          AUTH_SECRET: ${{ secrets.AUTH_SECRET }}
+          VOICE_OWNER_SECRET: ${{ secrets.VOICE_OWNER_SECRET }}
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
         run: |
           missing=0
-          for name in DOMAIN HOST USER KEY SESSION_SECRET; do
-            if [ -z "${!name}" ]; then echo "::error::Missing setting: $name (see deploy/README.md)"; missing=1; fi
+          for name in HOST USER KEY AUTH_SECRET VOICE_OWNER_SECRET GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET GEMINI_API_KEY ELEVENLABS_API_KEY; do
+            if [ -z "${!name}" ]; then echo "::error::Missing setting: $name (see voice-inbox-assistant/README.md)"; missing=1; fi
           done
           exit $missing
 
@@ -124,13 +199,14 @@ jobs:
       - name: Build and push image
         uses: docker/build-push-action@v6
         with:
-          context: .
+          context: voice-inbox-assistant
           push: true
+          build-args: APP_COMMIT=${{ github.sha }}
           tags: |
-            ${{ env.IMAGE }}:${{ github.sha }}
-            ${{ env.IMAGE }}:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+            ${{ env.WEB_IMAGE }}:${{ github.sha }}
+            ${{ env.WEB_IMAGE }}:latest
+          cache-from: type=gha,scope=voice-inbox
+          cache-to: type=gha,mode=max,scope=voice-inbox
 
       - name: Set up SSH
         env:
@@ -150,37 +226,46 @@ jobs:
 
       - name: Write server .env
         env:
-          VOCAMAIL_DOMAIN: ${{ vars.VOCAMAIL_DOMAIN }}
-          DEMO_MODE: ${{ vars.DEMO_MODE || 'true' }}
-          SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
+          AUTH_SECRET: ${{ secrets.AUTH_SECRET }}
+          VOICE_OWNER_SECRET: ${{ secrets.VOICE_OWNER_SECRET }}
           GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
           GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          ADMIN_EMAILS: ${{ vars.ADMIN_EMAILS }}
+          CONTACT_EMAIL: ${{ vars.CONTACT_EMAIL }}
+          VOICES_PER_USER: ${{ vars.VOICES_PER_USER }}
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
+          GEMINI_FALLBACK_MODEL: ${{ vars.GEMINI_FALLBACK_MODEL }}
+          ELEVENLABS_MODEL: ${{ vars.ELEVENLABS_MODEL }}
         run: |
           umask 077
           {
-            echo "VOCAMAIL_IMAGE=${IMAGE}:${GITHUB_SHA}"
-            echo "VOCAMAIL_DOMAIN=${VOCAMAIL_DOMAIN}"
-            echo "PUBLIC_URL=https://${VOCAMAIL_DOMAIN}"
-            echo "DEMO_MODE=${DEMO_MODE}"
-            for name in SESSION_SECRET GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET ANTHROPIC_API_KEY ELEVENLABS_API_KEY; do
-              # Only write keys that are set; anything missing falls back to demo mode.
+            echo "APP_IMAGE=${WEB_IMAGE}:${GITHUB_SHA}"
+            echo "APP_DOMAIN=${DOMAIN}"
+            echo "AUTH_URL=https://${DOMAIN}"
+            echo "NEXTAUTH_URL=https://${DOMAIN}"
+            echo "NEXTAUTH_SECRET=${AUTH_SECRET}"
+            for name in AUTH_SECRET VOICE_OWNER_SECRET GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET GEMINI_API_KEY ELEVENLABS_API_KEY \
+                        ADMIN_EMAILS CONTACT_EMAIL VOICES_PER_USER GEMINI_MODEL GEMINI_FALLBACK_MODEL ELEVENLABS_MODEL; do
+              # Optional settings that are empty are left out so the app's defaults apply.
               if [ -n "${!name}" ]; then echo "${name}=${!name}"; fi
             done
-          } > deploy/.env
+          } > voice-inbox-assistant/deploy/.env
 
       - name: Copy files and restart
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          ssh vultr 'mkdir -p /opt/vocamail'
-          scp deploy/docker-compose.yml deploy/Caddyfile deploy/.env vultr:/opt/vocamail/
-          ssh vultr 'chmod 600 /opt/vocamail/.env'
+          ssh vultr 'mkdir -p /opt/voice-inbox'
+          scp voice-inbox-assistant/deploy/docker-compose.yml voice-inbox-assistant/deploy/Caddyfile voice-inbox-assistant/deploy/.env vultr:/opt/voice-inbox/
+          ssh vultr 'chmod 600 /opt/voice-inbox/.env'
           # The repo is private, so the server logs in to GHCR with this run's short-lived token.
           echo "$GHCR_TOKEN" | ssh vultr "
             set -e
-            cd /opt/vocamail
+            # The earlier VocaMail stack used ports 80/443 on this server; stop it so this one's Caddy can bind them.
+            if [ -f /opt/vocamail/docker-compose.yml ]; then (cd /opt/vocamail && docker compose down) || true; fi
+            cd /opt/voice-inbox
             docker login ghcr.io -u '${{ github.actor }}' --password-stdin
             docker compose pull
             docker compose up -d --remove-orphans
@@ -188,21 +273,20 @@ jobs:
             docker image prune -f
           "
 
-      - name: Check the live site
-        env:
-          DOMAIN: ${{ vars.VOCAMAIL_DOMAIN }}
+      - name: Check the live site runs this commit
         run: |
           # The first deploy waits for Caddy to get an HTTPS certificate.
           for i in $(seq 1 30); do
-            if curl -fsS "https://${DOMAIN}/" >/dev/null; then
-              echo "Live at https://${DOMAIN}"; exit 0
+            commit="$(curl -fsS "https://${DOMAIN}/api/health" 2>/dev/null | jq -r .commit || true)"
+            if [ "$commit" = "$GITHUB_SHA" ]; then
+              echo "Live at https://${DOMAIN} running $GITHUB_SHA"; exit 0
             fi
             sleep 5
           done
-          echo "::error::https://${DOMAIN} did not respond"
-          ssh vultr 'cd /opt/vocamail && docker compose ps && docker compose logs --tail=80'
+          echo "::error::https://${DOMAIN}/api/health did not report commit $GITHUB_SHA (last: ${commit:-no answer})"
+          ssh vultr 'cd /opt/voice-inbox && docker compose ps && docker compose logs --tail=80'
           exit 1
 
       - name: Clean up
         if: always()
-        run: rm -f deploy/.env ~/.ssh/deploy_key
+        run: rm -f voice-inbox-assistant/deploy/.env ~/.ssh/deploy_key

@@ -24,8 +24,12 @@ const TAG = /\s*\[via-owner:([a-f0-9]{16})\]\s*$/;
 const PERSONAL = new Set(["cloned", "professional", "famous"]);
 const DESCRIPTION_MAX = 1000;
 
-/** Stable, non-reversible owner id for a signed-in person. */
-export function ownerKey(identity: string, secret = process.env.AUTH_SECRET ?? process.env.NEXTAUTH_SECRET ?? ""): string {
+/**
+ * Stable, non-reversible owner id for a signed-in person. VOICE_OWNER_SECRET must be the same
+ * everywhere that shares the ElevenLabs account (your computer and the server), or voices made in
+ * one place can't be found by their owner in the other. Falls back to AUTH_SECRET.
+ */
+export function ownerKey(identity: string, secret = process.env.VOICE_OWNER_SECRET || process.env.AUTH_SECRET || process.env.NEXTAUTH_SECRET || ""): string {
   return createHmac("sha256", secret).update(`voice-owner:${identity.trim().toLowerCase()}`).digest("hex").slice(0, 16);
 }
 

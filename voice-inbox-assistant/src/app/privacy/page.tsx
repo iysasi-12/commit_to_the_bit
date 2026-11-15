@@ -1,12 +1,15 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { connection } from "next/server";
 
 export const metadata: Metadata = { title: "Privacy policy · Voice Inbox Assistant" };
 
 const UPDATED = "November 14, 2026";
 
 /** Public privacy policy (Google's OAuth verification requires one on the app's domain). */
-export default function Privacy() {
+export default async function Privacy() {
+  // Rendered per request so CONTACT_EMAIL comes from the server's env, not the Docker build.
+  await connection();
   const contact = process.env.CONTACT_EMAIL;
   const h2 = "mt-8 text-xl font-bold";
   const p = "mt-3 leading-relaxed text-slate-300";

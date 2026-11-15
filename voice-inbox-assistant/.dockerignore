@@ -1,0 +1,11 @@
+node_modules
+.next
+.env
+.env.*
+!.env.example
+chrome-extension
+docs
+deploy
+*.log
+*.tsbuildinfo
+next-env.d.ts
