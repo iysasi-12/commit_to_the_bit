@@ -1,0 +1,21 @@
+import { NextResponse } from "next/server";
+
+/**
+ * GET → which build is running, so a deploy can be checked against `git rev-parse HEAD`.
+ * APP_COMMIT is set by deploy/setup-vultr.sh. Reveals no secrets or user data.
+ */
+export function GET() {
+  return NextResponse.json(
+    {
+      ok: true,
+      commit: process.env.APP_COMMIT || "unknown",
+      configured: {
+        google: Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET),
+        gemini: Boolean(process.env.GEMINI_API_KEY),
+        elevenlabs: Boolean(process.env.ELEVENLABS_API_KEY),
+        authUrl: process.env.AUTH_URL || process.env.NEXTAUTH_URL || null,
+      },
+    },
+    { headers: { "Cache-Control": "no-store" } },
+  );
+}

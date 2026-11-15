@@ -1,10 +1,19 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { reconnectGoogle, signOutAction } from "@/app/actions";
 import { BUTLER_NAME, VoiceBox } from "@/components/VoiceBox";
 import type { SummaryLength } from "@/lib/system-prompt";
+import { composeSpoken } from "@/lib/triage";
 import { DEFAULT_VOICE, readError, storageGet, storageSet, type ActiveVoice, type QueueItem } from "@/components/types";
+
+/** Short hash of the spoken text, so audio made for "First, …" is never reused for "Finally, …". */
+function textKey(text: string): string {
+  let h = 5381;
+  for (let i = 0; i < text.length; i++) h = ((h << 5) + h + text.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(36);
+}
+const audioKey = (id: string, voiceId: string, text: string) => `${id}-${voiceId}-${textKey(text)}`;
 
 type Group = QueueItem["group"];
 
@@ -48,13 +57,15 @@ export function Dashboard({ name, email, sessionExpired }: { name: string; email
   const [status, setStatus] = useState<PlayStatus>("idle");
   const [playError, setPlayError] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  // Audio already paid for, keyed by `${emailId}-${voiceId}`, so replays never call ElevenLabs again.
+  // Audio already paid for, keyed by email, voice and exact text, so replays never call ElevenLabs again.
   const cache = useRef(new Map<string, string>());
   const playToken = useRef(0);
 
   useEffect(() => {
     const saved = storageGet<ActiveVoice | null>("via.voice", null);
     if (saved?.id) {
+      // Browser storage only exists after hydration, so saved choices are applied here, once.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setVoice(saved);
       voiceRef.current = saved;
     }
@@ -86,7 +97,7 @@ export function Dashboard({ name, email, sessionExpired }: { name: string; email
 
   /** Fetches (or reuses) audio for one email and plays it. Called only for the email being listened to. */
   const playItem = useCallback(
-    async (item: QueueItem) => {
+    async (item: QueueItem, text: string) => {
       const token = ++playToken.current;
       const el = audioRef.current;
       if (!el) return;
@@ -98,12 +109,12 @@ export function Dashboard({ name, email, sessionExpired }: { name: string; email
         setPlayError("Pick a voice in the Voice Box first.");
         return;
       }
-      const key = `${item.id}-${voiceId}`;
+      const key = audioKey(item.id, voiceId, text);
       let url = cache.current.get(key);
       if (!url) {
         setStatus("loading");
         try {
-          const res = await fetch("/api/tts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: item.summary, voiceId }) });
+          const res = await fetch("/api/tts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, voiceId }) });
           if (!res.ok) {
             const { message, code } = await readError(res);
             onAuthError(code);
@@ -172,7 +183,8 @@ export function Dashboard({ name, email, sessionExpired }: { name: string; email
       const json = (await res.json()) as { queue: QueueItem[]; stats: ScanStats };
       setQueue(json.queue);
       setStats(json.stats);
-      if (json.queue[0]) void playItem(json.queue[0]);
+      // The All tab is selected after a scan, so the first email's text comes from the full queue.
+      if (json.queue[0]) void playItem(json.queue[0], composeSpoken(json.queue)[0]!);
     } catch {
       setScanError("Couldn't reach the server. Check your connection.");
     } finally {
@@ -180,9 +192,12 @@ export function Dashboard({ name, email, sessionExpired }: { name: string; email
     }
   }
 
-  // The player steps through the emails in the selected tab.
-  const list = tab === "all" ? queue : queue.filter((q) => q.group === tab);
+  // The player steps through the emails in the selected tab. The spoken words ("Starting with…",
+  // "First,", "Finally,") are rebuilt for that exact list, so they always match the order heard.
+  const list = useMemo(() => (tab === "all" ? queue : queue.filter((q) => q.group === tab)), [queue, tab]);
+  const spoken = useMemo(() => composeSpoken(list), [list]);
   const current = list[index];
+  const currentText = spoken[index] ?? "";
   const atEnd = index >= list.length - 1;
 
   function changeTab(t: TabId) {
@@ -199,14 +214,14 @@ export function Dashboard({ name, email, sessionExpired }: { name: string; email
     if (atEnd) return;
     const i = index + 1;
     setIndex(i);
-    void playItem(list[i]!);
+    void playItem(list[i]!, spoken[i]!);
   }
 
-  // "Read all at once": when one summary finishes, start the next (audio is still made one email at a time).
-  useEffect(() => {
-    if (status === "ended" && continuous && !atEnd) next();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status]);
+  /** "Read all at once": when one summary finishes, start the next (audio is still made one email at a time). */
+  function onEnded() {
+    setStatus("ended");
+    if (continuous && !atEnd) next();
+  }
 
   function skip() {
     if (atEnd) return;
@@ -220,11 +235,12 @@ export function Dashboard({ name, email, sessionExpired }: { name: string; email
   function replay() {
     if (!current) return;
     const el = audioRef.current;
-    if (el && cache.current.get(`${current.id}-${voice.id}`) && el.src === cache.current.get(`${current.id}-${voice.id}`)) {
+    const cached = cache.current.get(audioKey(current.id, voice.id, currentText));
+    if (el && cached && el.src === cached) {
       el.currentTime = 0;
       void el.play();
     } else {
-      void playItem(current);
+      void playItem(current, currentText);
     }
   }
 
@@ -235,20 +251,20 @@ export function Dashboard({ name, email, sessionExpired }: { name: string; email
     else if (status === "paused") void el.play();
   }
 
-  const btn = "rounded-xl px-4 py-3 font-semibold disabled:opacity-40";
+  const btn = "inline-flex min-h-11 items-center justify-center rounded-xl px-4 py-2.5 font-semibold disabled:cursor-not-allowed disabled:opacity-40";
 
   return (
     <main className="mx-auto max-w-4xl space-y-6 px-4 py-6 sm:px-6">
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold">Voice Inbox Assistant</h1>
-          <p className="text-sm text-slate-400">
+          <p className="text-sm text-slate-400 [overflow-wrap:anywhere]">
             {name ? `${name} · ` : ""}
             {email}
           </p>
         </div>
         <form action={signOutAction}>
-          <button className="rounded-lg border border-slate-600 px-3 py-2 text-sm hover:bg-slate-800">Sign out</button>
+          <button className="min-h-11 rounded-lg border border-slate-600 px-3 py-2 text-sm hover:bg-slate-800">Sign out</button>
         </form>
       </header>
 
@@ -270,7 +286,7 @@ export function Dashboard({ name, email, sessionExpired }: { name: string; email
         <div className="flex flex-wrap items-end gap-3">
           <label className="text-sm font-semibold">
             Recent emails
-            <select className="ml-2 rounded-lg border border-slate-600 bg-slate-900 px-3 py-2" value={count} onChange={(e) => setCount(Number(e.target.value))} disabled={scanning}>
+            <select className="ml-2 min-h-11 rounded-lg border border-slate-600 bg-slate-900 px-3 py-2" value={count} onChange={(e) => setCount(Number(e.target.value))} disabled={scanning}>
               {[5, 10, 15, 20, 25, 30].map((n) => (
                 <option key={n} value={n}>
                   {n}
@@ -291,7 +307,7 @@ export function Dashboard({ name, email, sessionExpired }: { name: string; email
                     setLength(l);
                     storageSet("via.length", l);
                   }}
-                  className={`rounded-md px-3 py-1.5 capitalize ${length === l ? "bg-indigo-500 text-white" : "text-slate-300 hover:bg-slate-800"}`}
+                  className={`min-h-10 rounded-md px-3 py-1.5 capitalize ${length === l ? "bg-indigo-500 text-white" : "text-slate-300 hover:bg-slate-800"}`}
                 >
                   {l}
                 </button>
@@ -349,7 +365,7 @@ export function Dashboard({ name, email, sessionExpired }: { name: string; email
                 role="tab"
                 aria-selected={tab === t}
                 onClick={() => changeTab(t)}
-                className={`rounded-full px-4 py-2 text-sm font-semibold ${tab === t ? "bg-indigo-500 text-white" : "border border-slate-600 text-slate-200 hover:bg-slate-800"}`}
+                className={`min-h-11 rounded-full px-4 py-2 text-sm font-semibold ${tab === t ? "bg-indigo-500 text-white" : "border border-slate-600 text-slate-200 hover:bg-slate-800"}`}
               >
                 {t === "all" ? "All" : GROUP_LABEL[t]} <span className="opacity-70">({n})</span>
               </button>
@@ -369,11 +385,18 @@ export function Dashboard({ name, email, sessionExpired }: { name: string; email
             <span className={`rounded-full px-3 py-1 text-sm font-semibold ${GROUP_STYLE[current.group]}`}>{GROUP_LABEL[current.group]}</span>
           </div>
           <div className="mt-3 text-sm text-slate-400">
-            <div className="truncate">From: {current.from}</div>
-            <div className="truncate">Subject: {current.subject}</div>
+            {/* Wrapped, not cut off, so the full sender and subject are readable on a phone. */}
+            <div className="[overflow-wrap:anywhere]" title={current.from}>
+              From: {current.from}
+            </div>
+            <div className="[overflow-wrap:anywhere]" title={current.subject}>
+              Subject: {current.subject}
+            </div>
           </div>
-          <p className="mt-4 whitespace-pre-line text-lg leading-relaxed">{current.summary}</p>
-          <p className="mt-2 text-xs text-slate-500">AI-generated summary read by an AI voice ({voice.label || "no voice"}).</p>
+          <p className="mt-4 whitespace-pre-line text-lg leading-relaxed [overflow-wrap:anywhere]">{currentText}</p>
+          <p className="mt-2 text-xs text-slate-500 [overflow-wrap:anywhere]">
+            AI-generated summary read by an AI voice (<span title={voice.label || undefined}>{voice.label || "no voice picked"}</span>).
+          </p>
 
           <div className="mt-5 text-sm text-slate-300" role="status">
             {status === "loading" && "Generating audio…"}
@@ -387,7 +410,7 @@ export function Dashboard({ name, email, sessionExpired }: { name: string; email
 
           <div className="mt-4 flex flex-wrap gap-3">
             {status === "idle" || status === "error" ? (
-              <button className={`${btn} bg-indigo-500 text-white hover:bg-indigo-400`} onClick={() => void playItem(current)}>
+              <button className={`${btn} bg-indigo-500 text-white hover:bg-indigo-400`} onClick={() => void playItem(current, currentText)}>
                 ▶ Listen
               </button>
             ) : (
@@ -414,8 +437,7 @@ export function Dashboard({ name, email, sessionExpired }: { name: string; email
         onPause={(e) => {
           if (!e.currentTarget.ended) setStatus((s) => (s === "loading" ? s : "paused"));
         }}
-        // Never auto-advance: wait for Next Email.
-        onEnded={() => setStatus("ended")}
+        onEnded={onEnded}
         onError={() => {
           if (audioRef.current?.getAttribute("src")) {
             setStatus("error");

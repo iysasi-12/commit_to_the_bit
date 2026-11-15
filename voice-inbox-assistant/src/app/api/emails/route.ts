@@ -4,7 +4,7 @@ import { summarizeAll } from "@/lib/gemini";
 import { fetchRecentEmails } from "@/lib/gmail";
 import { sensitiveNotice } from "@/lib/sensitive";
 import { requireGoogleAccessToken } from "@/lib/server-auth";
-import { buildQueue, type QueueItem } from "@/lib/triage";
+import { buildQueue, withSpoken, type QueueItem } from "@/lib/triage";
 
 export const maxDuration = 120;
 
@@ -27,11 +27,12 @@ export async function POST(req: Request) {
       throw new ApiError(503, "GEMINI_FAILED", failed[0]?.error ?? "Gemini couldn't summarize any emails. Please try again.");
     }
     const ok = results.filter((r): r is { email: (typeof r)["email"]; output: string } => r.output !== null);
-    const queue: QueueItem[] = buildQueue(ok.map((r) => ({ id: r.email.id, from: r.email.from, subject: r.email.subject, output: r.output })));
+    let queue: QueueItem[] = buildQueue(ok.map((r) => ({ id: r.email.id, from: r.email.from, subject: r.email.subject, output: r.output })));
     // The count of skipped sensitive emails is spoken last. It's written here, not by the AI.
     const notice = sensitiveNotice(scan.sensitive);
     if (notice) {
-      queue.push({ id: "sensitive-notice", from: "Voice Inbox Assistant", subject: "Sensitive emails skipped", category: "transactions", group: "skipped", summary: notice });
+      queue.push({ id: "sensitive-notice", from: "Voice Inbox Assistant", subject: "Sensitive emails skipped", category: "transactions", group: "skipped", body: notice, summary: notice });
+      queue = withSpoken(queue);
     }
     const sensitiveTotal = Object.values(scan.sensitive).reduce((n, v) => n + (v ?? 0), 0);
     return NextResponse.json({

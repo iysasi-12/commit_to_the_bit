@@ -1,153 +1,136 @@
 # Voice Inbox Assistant
 
-Sign in with Google, click **Scan & Summarize Inbox**, and hear your newest emails one at a time: **Work / School** first, then **Personal**, then **Transactions**. Spam is silently skipped.
+Sign in with Google, click **Scan & Summarize Inbox**, and hear your newest emails summarized in the voice you pick: **Work**, then **School**, then **Personal**, then **Transactions**. Spam is silently skipped, and sensitive emails are never opened.
 
 - **Summaries**: Gemini (`@google/genai`, `gemini-3.8-flash`, temperature 0.1) with the exact system prompt in `src/lib/system-prompt.ts`.
-- **Voices**: ElevenLabs (`eleven_flash_v2_5`, `mp3_44100_128`).
+- **Voices**: ElevenLabs (`eleven_v4` by default, `mp3_44100_128`). Presets, designed character voices, and your own cloned voice.
 - **App**: Next.js 16 (App Router, TypeScript, Tailwind) with Auth.js v5 for Google sign-in and `googleapis` for Gmail (read-only).
 
 ## How it works
 
-1. **Scan** (`POST /api/emails`): reads the newest N inbox emails (default 10) and turns HTML into plain text with `html-to-text`. Gemini then summarizes each email separately, a few at a time.
-   - Output of exactly `DISCARDED: SPAM` is dropped.
-   - The category comes from the spoken lead-in ("Starting with Work and School.", "Next, Personal.", "Finally, Transactions.").
-   - Emails are ordered Work/School → Personal → Transactions, and only the first email of each group keeps its lead-in.
+1. **Scan** (`POST /api/emails`): reads the newest N inbox emails (default 10).
+   - Sensitive emails (banking, medical, government, security codes) are recognized from the sender and subject only. Their text is never downloaded, summarized or spoken; the app just says how many it skipped.
+   - Gemini summarizes each remaining email separately, a few at a time. Output of exactly `DISCARDED: SPAM` is dropped.
+   - The category comes from Gemini's lead-in ("Starting with Work and School.", …). The app then **removes Gemini's lead-ins** (persona variants too, like "Finally, Transactions, sir.") and orders emails Work → School → Personal → Transactions.
    - **No ElevenLabs calls happen during the scan.**
-2. **Player**: speaks one email at a time.
-   - Audio is generated only for the email being played (`POST /api/tts`), and only after **Next Email →** or **Listen**.
-   - Audio is cached in the browser by `${emailId}-${voiceId}`, so **Replay** never costs credits.
-   - When an email finishes, the player waits; it never auto-advances.
-   - **Skip** moves on without generating audio.
-3. **Voice Box**:
-   - **Preset & account voices** (`/api/voices`): **Test Voice** plays ElevenLabs' free preview clip when one exists.
-   - **Voice Design** (`/api/voices/design`, `eleven_ttv_v3`): **Save & Use Voice** saves the preview you pick (`/api/voices/create`).
-   - **Paste a voice ID**: saved in this browser.
-   - **Instant Voice Clone** (`/api/voices/clone`): needs a paid ElevenLabs plan.
-   - The chosen voice is remembered in `localStorage`.
-4. **Security**:
-   - Gemini and ElevenLabs keys are read only in server routes, never as `NEXT_PUBLIC_*`.
-   - Google tokens live in the encrypted, HttpOnly Auth.js cookie and are refreshed automatically.
-   - If Google refuses a refresh (access revoked, or the 7-day limit for apps in Testing mode), the page shows **"Session Expired — Sign Out & Reconnect Google"** instead of crashing.
+2. **Spoken order** (`composeSpoken` in `src/lib/triage.ts`), rebuilt for exactly the tab being played:
+   - **All tab**: "Starting with Work, three emails. First, … Second, … Finally, …", "Next, School, two emails. First, … Finally, …", and "Lastly, Transactions, …". The sensitive-email note comes last.
+   - **One tab**: "You have three transaction emails. First, … Finally, …".
+   - A section with a single email gets no First/Finally.
+3. **Player**: audio is made only for the email being played (`POST /api/tts`). It's cached in the browser per email, voice and exact text, so **Replay** never costs credits. **Read all at once** (default on) plays the emails back to back; turn it off to stop after each one.
+4. **Voice Box**: presets, **Design a voice** (`eleven_ttv_v3`), **Clone a voice** (record or upload), or paste a voice ID. Long voice names wrap instead of being cut off. The name shown always matches the voice that speaks: a voice renamed or deleted in ElevenLabs is picked up on the next load.
+5. **Character voices**: choosing **The Butler** or **The Angry Coach** also changes how the summaries are written (persona added after the exact system prompt).
 
-## Extras
+## Many users, one ElevenLabs account
 
-- **Category tabs**: after a scan, tabs for **All · Work · School · Personal · Transactions** let you play through just one group. Gemini's Work/School category is split into Work and School by simple clues: `.edu` senders, Canvas or Blackboard, professors, classes, assignments and exams count as School.
-- **Butler mode**: a checkbox next to the scan button.
-  - Summaries are delivered by an original, refined elderly British butler who addresses you as "sir". The exact system prompt is unchanged; the persona is added after it only when the box is ticked.
-  - In the Voice Box under **Design a voice**, **🎩 Fill in the Butler voice** pre-fills a matching voice description. Generate previews, then **Save & Use Voice**.
+Everyone signs in with their own Google account, so each person only ever reads their own Gmail. Voices are kept apart like this (`src/lib/voice-access.ts`):
 
-## Chrome extension: use it on the Gmail page (your machine only)
+| Voice | Who sees and uses it | Who can remove it |
+|---|---|---|
+| ElevenLabs presets | everyone | nobody |
+| A voice you design or clone in the app | only you | only you |
+| Shared character voices (The Butler, The Angry Coach, …) | everyone | admins |
+| Clones made before owner tags existed (e.g. `jv10`) | admins | admins |
 
-The `chrome-extension/` folder adds a **🎧 AI Summary** button to Gmail. It opens the app in Chrome's side panel next to your email. The app itself must be running on http://localhost:3000.
+- Each new voice gets a private owner tag (an HMAC of your email, never the email itself) at the end of its ElevenLabs description. The tag never reaches the browser.
+- `/api/tts` refuses another person's voice before calling ElevenLabs.
+- Each non-admin may keep `VOICES_PER_USER` voices (default 3), because voice slots are shared.
+- Admins are listed in `ADMIN_EMAILS`.
 
-1. Start the app with `npm.cmd run dev`, as below.
-2. In Chrome, go to `chrome://extensions` and turn on **Developer mode** (top right).
-3. Click **Load unpacked** and choose the `voice-inbox-assistant\chrome-extension` folder.
-4. Open http://localhost:3000 in a normal tab and **sign in with Google** once. Google won't show its sign-in page inside a side panel.
-5. Open Gmail and click **🎧 AI Summary** (bottom right), or click the extension's toolbar icon. The side panel opens with your Voice Box, scan button, tabs and player.
+## Tests
 
-If the panel says you're signed out, Chrome may be blocking third-party cookies. Go to **Settings → Privacy and security → Third-party cookies → Sites allowed to use third-party cookies** and add `localhost`, or simply use http://localhost:3000 in a tab.
+```bash
+npm.cmd test
+```
+
+Runs the spoken-order and voice-ownership unit tests (no network, no keys). Set `PRINT=1` to print exactly what is spoken for All and each tab.
+
+## Chrome extension (Gmail button)
+
+The `chrome-extension/` folder adds a **🎧 AI Summary** button to Gmail that opens the app in Chrome's side panel.
+
+1. Start the app (`npm.cmd run dev`), or use the hosted site once it's live.
+2. In Chrome, go to `chrome://extensions`, turn on **Developer mode**, click **Load unpacked** and choose `voice-inbox-assistant\chrome-extension`. After an update, click the reload icon on the extension.
+3. Open the app in a normal tab and **sign in with Google** once (Google won't show sign-in inside a side panel).
+4. In Gmail, click **🎧 AI Summary** and pick Short, Medium or Long.
+
+**Which server?** Right-click the extension icon → **Options**: *This computer* (http://localhost:3000, the default) or *vocamain.biz*.
+
+If the panel says you're signed out, Chrome may be blocking third-party cookies: allow them for the app's site, or use the app in a normal tab.
 
 ## Run it locally
 
-Requires Node.js 20.9+ (tested on Node 24).
+Requires Node.js 20.9+ (tested on Node 24). On Windows PowerShell, use `npm.cmd` instead of `npm`.
 
 ```bash
-cd voice-inbox-assistant
+npm.cmd install
 ```
 
 ```bash
-npm install
+copy .env.example .env.local
 ```
+
+Fill in `.env.local` (below), then:
 
 ```bash
-cp .env.example .env.local
+npm.cmd run dev
 ```
 
-Fill in `.env.local` (see the next section), then:
-
-```bash
-npm run dev
-```
-
-Open http://localhost:3000. For a production build:
-
-```bash
-npm run build
-```
-
-```bash
-npm start
-```
-
-The older Inbox Voice app in the parent folder also uses port 3000, so run only one at a time.
+Open http://localhost:3000. The older Inbox Voice app in the parent folder also uses port 3000, so run only one at a time.
 
 ## `.env.local`
 
 | Variable | Where it comes from |
 |---|---|
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Google Cloud OAuth client (below) |
-| `NEXTAUTH_SECRET`, `AUTH_SECRET` | Any 32+ character random string; use the same value for both. `node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"` |
-| `NEXTAUTH_URL`, `AUTH_URL` | `http://localhost:3000` locally; `https://your-domain.com` on a server |
-| `GEMINI_API_KEY` | https://aistudio.google.com/apikey (personal Google account; school accounts often block AI Studio) |
-| `GEMINI_MODEL` | Optional, default `gemini-3.8-flash`. If it's overloaded, the app retries once with `GEMINI_FALLBACK_MODEL` (default `gemini-3.5-flash-lite`). |
+| `NEXTAUTH_SECRET`, `AUTH_SECRET` | Any 32+ character random string, the same for both. Changing it signs everyone out and changes voice owner tags. |
+| `NEXTAUTH_URL`, `AUTH_URL` | `http://localhost:3000` locally; `https://vocamain.biz` on the server |
+| `GEMINI_API_KEY` | https://aistudio.google.com/apikey |
+| `GEMINI_MODEL`, `GEMINI_FALLBACK_MODEL` | Optional. Defaults `gemini-3.8-flash`, then `gemini-3.5-flash-lite` if the first is busy. |
 | `ELEVENLABS_API_KEY` | ElevenLabs → Developers → API Keys. Allow Text to Speech, Voices (write) and Voice Generation. |
+| `ELEVENLABS_MODEL` | Optional, default `eleven_v4`. `eleven_flash_v2_5` is faster and cheaper but flatter. |
+| `ADMIN_EMAILS` | Comma-separated Google emails that can manage shared and older voices. |
+| `VOICES_PER_USER` | Optional, default 3. |
+| `CONTACT_EMAIL` | Shown on `/privacy`. Set it before `npm run build`, because the page is built once. |
 
-## Google Cloud setup
+## Google Cloud: letting people sign in
 
-### Testing on localhost (works today)
+### Testing mode (now)
 
-1. Go to https://console.cloud.google.com and create a project.
-2. Go to **APIs & Services → Library → Gmail API → Enable**.
-3. In **Google Auth Platform → Branding**, set the app name and support email.
-4. In **Audience**, choose **External**. In **Test users**, click **Add users**, enter every Gmail that will sign in, and click **Save**.
-5. In **Data Access**, click **Add or remove scopes** and add `openid`, `email`, `profile` and `https://www.googleapis.com/auth/gmail.readonly`.
-6. In **Clients → Create client**, choose **Web application** and add the redirect URI `http://localhost:3000/api/auth/callback/google`.
-7. Copy the client ID and secret into `.env.local`.
-
-While in Testing mode:
-- Only listed test users can sign in.
-- Google shows an "unverified app" screen. Click **Continue**.
+- Only the test users listed under **Google Auth Platform → Audience** can sign in (up to 100). Add each person's Gmail there.
+- Google shows an "unverified app" screen; click **Continue**.
 - Sign-ins expire after 7 days, and the app then shows the reconnect banner.
+- Redirect URIs (**Clients**): `http://localhost:3000/api/auth/callback/google`, and for the server `https://vocamain.biz/api/auth/callback/google`.
 
-### Opening it to any Google user (production)
+### Any Google user (production)
 
-1. On **Branding**, add your home page, privacy policy and terms URLs, plus your authorized domain.
-2. In **Audience**, click **Publish app**.
-3. `gmail.readonly` is a restricted scope, so Google requires restricted-scope verification **and** an annual third-party security assessment before anyone outside your test users can sign in. Submit these in **Verification Center**. Allow several weeks.
+`gmail.readonly` is a **restricted** scope. Before people outside your test list can sign in, Google requires:
 
-## Deploying to a Vultr VPS with your own domain
+1. A verified domain (`vocamain.biz` in Search Console) listed under **Branding → Authorized domains**, with the home page `https://vocamain.biz` and privacy policy `https://vocamain.biz/privacy`.
+2. **Publish app** under **Audience**, then submit **restricted-scope verification** in **Verification Center** (scope justification and a demo video of the sign-in and scan).
+3. A yearly third-party **security assessment** (CASA). Plan for several weeks.
+4. Gemini on a **paid** API tier (billing enabled on the key's project). On the free tier Google may use prompts to improve its products, which doesn't fit Gmail's Limited Use rules or the privacy policy.
 
-1. Create an Ubuntu VPS and point your domain's DNS **A record** at its IP.
-2. Install Node.js 20+ and clone the repo. Then:
+## Deploying to Vultr (vocamain.biz)
+
+1. Create an Ubuntu 24.04 Vultr server. At your domain registrar, add **A records** for `vocamain.biz` and `www.vocamain.biz` pointing at its IP.
+2. Make a production env file (a copy of `.env.local` with `AUTH_URL` and `NEXTAUTH_URL` set to `https://vocamain.biz`) and copy it to the server. It never goes in Git:
    ```bash
-   cd voice-inbox-assistant && npm ci && npm run build
+   scp .env.production root@SERVER_IP:/etc/voice-inbox.env
    ```
-3. Create `.env.local` on the server with `NEXTAUTH_URL=https://your-domain.com` and `AUTH_URL=https://your-domain.com`, plus the same keys.
-4. Run the app on port 3000 with a process manager:
+3. Copy and run the setup script. It installs Node 24 and Caddy (automatic HTTPS), clones `main`, runs the tests, builds, and starts a systemd service on 127.0.0.1:3000. The first run prints a deploy key to add on GitHub (repo → Settings → Deploy keys, read-only), because the repo is private. Run it again after adding the key.
    ```bash
-   npx pm2 start "npm start" --name voice-inbox
+   scp deploy/setup-vultr.sh root@SERVER_IP:/root/
    ```
-   Then run `npx pm2 save` so it restarts on reboot.
-5. Put HTTPS in front of it:
-   - **Caddy (simplest)**: in `/etc/caddy/Caddyfile`, add the block below. Caddy gets the HTTPS certificate automatically.
-     ```
-     your-domain.com {
-         reverse_proxy localhost:3000
-     }
-     ```
-   - **Nginx**: use `proxy_pass http://localhost:3000;` with these headers, plus a certificate from `certbot --nginx`:
-     ```
-     proxy_set_header Host $host;
-     proxy_set_header X-Forwarded-Proto $scheme;
-     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-     ```
-6. In Google Cloud **Clients**, add `https://your-domain.com/api/auth/callback/google` as a redirect URI. Then add the domain under **Branding → Authorized domains**.
-7. Auth.js is configured with `trustHost: true`, so callbacks and secure cookies work behind the proxy with no code changes.
-
-## What's verified
-
-- `npm run build` passes (TypeScript and production build).
-- The spam, ordering and lead-in logic was checked locally.
-- The Gemini key, ElevenLabs key and Google OAuth client were each confirmed working earlier, against the same accounts.
-- **Not yet tested end to end in this app**: signing in with Gmail and scanning a real inbox, Voice Design, and cloning. You're running those tests yourself to save credits.
+   ```bash
+   ssh root@SERVER_IP "bash /root/setup-vultr.sh"
+   ```
+4. Add `https://vocamain.biz/api/auth/callback/google` as a redirect URI in Google Cloud **Clients**.
+5. **Check the server runs the tested commit:** these two must match.
+   ```bash
+   curl -s https://vocamain.biz/api/health
+   ```
+   ```bash
+   git rev-parse HEAD
+   ```
+6. To update later, push to `main` and run step 3's `ssh` command again.

@@ -2,6 +2,7 @@ import "server-only";
 import { getToken } from "next-auth/jwt";
 import { refreshGoogleToken, SESSION_COOKIE } from "@/auth";
 import { ApiError } from "@/lib/errors";
+import { isAdminEmail, ownerKey, type Viewer } from "@/lib/voices";
 
 /** Decodes the Auth.js session cookie (fixed name, see auth.ts). */
 function readToken(req: Request) {
@@ -32,8 +33,17 @@ export async function requireGoogleAccessToken(req: Request): Promise<string> {
 
 /** Requires a signed-in session (used to keep ElevenLabs routes from being used anonymously). */
 export async function requireSignedIn(req: Request): Promise<void> {
+  await requireViewer(req);
+}
+
+/** The signed-in person as the voice routes see them: a private owner id and admin flag. */
+export async function requireViewer(req: Request): Promise<Viewer> {
   const token = await readToken(req);
   if (!token) throw new ApiError(401, "NOT_SIGNED_IN", "Please sign in with Google first.");
+  const email = typeof token.email === "string" ? token.email : "";
+  const identity = email || (typeof token.sub === "string" ? token.sub : "");
+  if (!identity) throw new ApiError(401, "NOT_SIGNED_IN", "Please sign in with Google again.");
+  return { owner: ownerKey(identity), admin: isAdminEmail(email) };
 }
 
 export function sessionExpired(): ApiError {

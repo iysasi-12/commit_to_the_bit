@@ -17,16 +17,58 @@ interface Props {
   onAuthError: (code: string) => void;
 }
 
-const btn = "rounded-lg px-3 py-2 text-sm font-semibold disabled:opacity-50";
+// min-h-11 = 44px, the smallest comfortable touch target on phones.
+const btn = "inline-flex min-h-11 items-center justify-center rounded-lg px-3 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50";
 const primary = `${btn} bg-indigo-500 text-white hover:bg-indigo-400`;
 const ghost = `${btn} border border-slate-600 text-slate-200 hover:bg-slate-800`;
-const input = "w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-2 text-slate-100 placeholder:text-slate-500";
+const input = "min-h-11 w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-2 text-slate-100 placeholder:text-slate-500";
+/** One voice row: name on its own line on phones, buttons beside it from 640px up. */
+const rowClass = (selected: boolean) =>
+  `flex flex-col gap-2 rounded-lg border px-3 py-2 sm:flex-row sm:items-center sm:gap-3 ${selected ? "border-indigo-400 bg-indigo-500/10" : "border-slate-700"}`;
+/** Long names wrap instead of being cut off ("The Very Long Custom Voice Name" never becomes "T…"). */
+const nameClass = "font-semibold [overflow-wrap:anywhere]";
+const inUseBadge = <span className="shrink-0 rounded-full bg-indigo-500 px-2.5 py-0.5 text-xs font-bold text-white">In use</span>;
+
+interface VoiceList {
+  custom: VoiceOption[];
+  presets: VoiceOption[];
+  slots: { used: number; limit: number; canClone: boolean } | null;
+  /** This person's own saved voices; limit is null for admins. */
+  mine: { used: number; limit: number | null };
+}
+
+/** The account's voices, the error response, or null when the server can't be reached. */
+async function requestVoices(): Promise<VoiceList | Response | null> {
+  try {
+    const res = await fetch("/api/voices");
+    return res.ok ? ((await res.json()) as VoiceList) : res;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Keeps the shown name equal to the voice really used: picks up a rename, and replaces a voice
+ * that was deleted in ElevenLabs. Voice IDs pasted by hand aren't in the account list, so they stay.
+ */
+export function reconcileVoice(list: VoiceList): { pick?: ActiveVoice; notice?: string } {
+  const saved = storageGet<ActiveVoice | null>("via.voice", null);
+  const first = list.presets[0];
+  const fallback = first ? { id: first.voice_id, label: first.name } : undefined;
+  if (!saved?.id) return { pick: fallback };
+  const match = [...list.custom, ...list.presets].find((v) => v.voice_id === saved.id);
+  if (match) return match.name === saved.label ? {} : { pick: { id: match.voice_id, label: match.name } };
+  const pasted = storageGet<ActiveVoice[]>("via.pastedVoices", []);
+  if (pasted.some((p) => p.id === saved.id) || !fallback) return {};
+  return { pick: fallback, notice: `"${saved.label}" is no longer in your ElevenLabs voices, so ${fallback.label} will read instead.` };
+}
 
 export function VoiceBox({ active, onSelect, onAuthError }: Props) {
   const [tab, setTab] = useState<Tab>("voices");
   const [custom, setCustom] = useState<VoiceOption[]>([]);
   const [presets, setPresets] = useState<VoiceOption[]>([]);
-  const [pasted, setPasted] = useState<ActiveVoice[]>([]);
+  // Read once on the client. Safe for hydration: the list only renders after voices finish loading.
+  const [pasted, setPasted] = useState<ActiveVoice[]>(() => storageGet<ActiveVoice[]>("via.pastedVoices", []));
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -48,11 +90,21 @@ export function VoiceBox({ active, onSelect, onAuthError }: Props) {
   const [consent, setConsent] = useState(false);
   const [removeNoise, setRemoveNoise] = useState(false);
   const [slots, setSlots] = useState<{ used: number; limit: number; canClone: boolean } | null>(null);
+  const [mine, setMine] = useState<VoiceList["mine"] | null>(null);
   const [recording, setRecording] = useState(false);
   const [seconds, setSeconds] = useState(0);
   const recorder = useRef<MediaRecorder | null>(null);
   const chunks = useRef<Blob[]>([]);
   const timer = useRef<number | null>(null);
+
+  const fail = useCallback(
+    async (res: Response) => {
+      const { message, code } = await readError(res);
+      if (code === "SESSION_EXPIRED" || code === "NOT_SIGNED_IN") onAuthError(code);
+      setError(message);
+    },
+    [onAuthError],
+  );
 
   function setTake(file: File) {
     if (cloneUrl) URL.revokeObjectURL(cloneUrl);
@@ -97,6 +149,39 @@ export function VoiceBox({ active, onSelect, onAuthError }: Props) {
     if (recorder.current?.state === "recording") recorder.current.stop();
   }
 
+  /** Applies a voice-list response to the screen. */
+  const applyVoices = useCallback(
+    (result: VoiceList | Response | null) => {
+      setLoading(false);
+      if (result === null) return setError("Couldn't load voices. Check your connection.");
+      if (result instanceof Response) return void fail(result);
+      setSlots(result.slots);
+      setMine(result.mine ?? null);
+      setCustom(result.custom);
+      setPresets(result.presets);
+      const { pick, notice } = reconcileVoice(result);
+      if (pick) onSelect(pick);
+      if (notice) setNotice(notice);
+    },
+    [fail, onSelect],
+  );
+
+  // First load (`loading` already starts true). A reply that arrives after the box closes is ignored.
+  useEffect(() => {
+    let alive = true;
+    void requestVoices().then((result) => alive && applyVoices(result));
+    return () => {
+      alive = false;
+    };
+  }, [applyVoices]);
+
+  /** Reloads after a change (new, saved or deleted voice), showing the loading state meanwhile. */
+  async function loadVoices() {
+    setLoading(true);
+    setError(null);
+    applyVoices(await requestVoices());
+  }
+
   async function removeVoice(id: string, name: string) {
     if (!window.confirm(`Delete "${name}" from your ElevenLabs account? This frees a voice slot and can't be undone.`)) return;
     setError(null);
@@ -110,40 +195,6 @@ export function VoiceBox({ active, onSelect, onAuthError }: Props) {
       setBusy(null);
     }
   }
-
-  const fail = useCallback(
-    async (res: Response) => {
-      const { message, code } = await readError(res);
-      if (code === "SESSION_EXPIRED" || code === "NOT_SIGNED_IN") onAuthError(code);
-      setError(message);
-    },
-    [onAuthError],
-  );
-
-  const loadVoices = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch("/api/voices");
-      if (!res.ok) return void (await fail(res));
-      const json = (await res.json()) as { custom: VoiceOption[]; presets: VoiceOption[]; slots: { used: number; limit: number; canClone: boolean } | null };
-      setSlots(json.slots);
-      setCustom(json.custom);
-      setPresets(json.presets);
-      if (!storageGet<ActiveVoice | null>("via.voice", null) && json.presets[0]) {
-        onSelect({ id: json.presets[0].voice_id, label: json.presets[0].name });
-      }
-    } catch {
-      setError("Couldn't load voices. Check your connection.");
-    } finally {
-      setLoading(false);
-    }
-  }, [fail, onSelect]);
-
-  useEffect(() => {
-    setPasted(storageGet<ActiveVoice[]>("via.pastedVoices", []));
-    void loadVoices();
-  }, [loadVoices]);
 
   function playUrl(url: string) {
     sample.current?.pause();
@@ -278,27 +329,38 @@ export function VoiceBox({ active, onSelect, onAuthError }: Props) {
 
   const voiceRow = (v: VoiceOption, removable = false) => {
     const selected = active.id === v.voice_id;
+    const testing = busy === `test-${v.voice_id}`;
+    const removing = busy === `remove-${v.voice_id}`;
     return (
-      <li key={v.voice_id} className={`flex items-center gap-3 rounded-lg border px-3 py-2 ${selected ? "border-indigo-400 bg-indigo-500/10" : "border-slate-700"}`}>
-        <div className="min-w-0 flex-1">
-          <div className="truncate font-semibold">{v.name}</div>
-          {v.description && <div className="truncate text-xs text-slate-400">{v.description}</div>}
+      <li key={v.voice_id} className={rowClass(selected)} aria-current={selected ? "true" : undefined}>
+        <div className="min-w-0 sm:flex-1">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span className={nameClass} title={v.name}>
+              {v.name}
+            </span>
+            {selected && inUseBadge}
+          </div>
+          {v.description && (
+            <div className="line-clamp-2 text-xs text-slate-400" title={v.description}>
+              {v.description}
+            </div>
+          )}
         </div>
-        <button className={ghost} onClick={() => void testVoice(v.voice_id, v.preview_url)} disabled={busy === `test-${v.voice_id}`}>
-          {busy === `test-${v.voice_id}` ? "…" : "Test Voice"}
-        </button>
-        {selected ? (
-          <span className="rounded-full bg-indigo-500 px-3 py-1 text-xs font-bold">In use</span>
-        ) : (
-          <button className={primary} onClick={() => onSelect({ id: v.voice_id, label: v.name })}>
-            Use
+        <div className="flex shrink-0 flex-wrap gap-2">
+          <button className={ghost} onClick={() => void testVoice(v.voice_id, v.preview_url)} disabled={testing} aria-label={`Test ${v.name}`}>
+            {testing ? "Loading…" : "Test Voice"}
           </button>
-        )}
-        {removable && (
-          <button className={ghost} onClick={() => void removeVoice(v.voice_id, v.name)} disabled={busy === `remove-${v.voice_id}`} aria-label={`Delete ${v.name}`}>
-            {busy === `remove-${v.voice_id}` ? "…" : "Remove"}
-          </button>
-        )}
+          {!selected && (
+            <button className={primary} onClick={() => onSelect({ id: v.voice_id, label: v.name })} aria-label={`Use ${v.name}`}>
+              Use
+            </button>
+          )}
+          {removable && (
+            <button className={ghost} onClick={() => void removeVoice(v.voice_id, v.name)} disabled={removing} aria-label={`Delete ${v.name}`}>
+              {removing ? "Removing…" : "Remove"}
+            </button>
+          )}
+        </div>
       </li>
     );
   };
@@ -309,8 +371,11 @@ export function VoiceBox({ active, onSelect, onAuthError }: Props) {
         <h2 id="voicebox-h" className="text-xl font-bold">
           Voice Box
         </h2>
-        <div className="text-sm text-slate-300">
-          Reading with: <span className="font-semibold text-white">{active.label || "no voice yet"}</span>
+        <div className="min-w-0 max-w-full text-sm text-slate-300" role="status">
+          Reading with:{" "}
+          <span className={`${nameClass} text-white`} title={active.label || undefined}>
+            {active.label || (loading ? "loading voices…" : "no voice yet")}
+          </span>
         </div>
       </div>
 
@@ -343,20 +408,22 @@ export function VoiceBox({ active, onSelect, onAuthError }: Props) {
         <div className="mt-4 space-y-5">
           {loading && <p className="text-slate-400">Loading voices…</p>}
           {!loading && !custom.some((v) => v.name === BUTLER_NAME) && (
-            <div className="flex items-center gap-3 rounded-lg border border-slate-700 px-3 py-2">
-              <div className="min-w-0 flex-1">
-                <div className="font-semibold">🎩 {BUTLER_NAME}</div>
-                <div className="truncate text-xs text-slate-400">A refined elderly British butler who calls you &ldquo;sir&rdquo;. Created in your ElevenLabs account the first time.</div>
+            <div className={rowClass(false)}>
+              <div className="min-w-0 sm:flex-1">
+                <div className={nameClass}>🎩 {BUTLER_NAME}</div>
+                <div className="text-xs text-slate-400">A refined elderly British butler who calls you &ldquo;sir&rdquo;. Created in your ElevenLabs account the first time.</div>
               </div>
-              <button className={primary} onClick={() => void addButler()} disabled={busy === "butler"}>
-                {busy === "butler" ? "Creating…" : "Add & Use"}
-              </button>
+              <div className="flex shrink-0 flex-wrap gap-2">
+                <button className={primary} onClick={() => void addButler()} disabled={busy === "butler"}>
+                  {busy === "butler" ? "Creating…" : "Add & Use"}
+                </button>
+              </div>
             </div>
           )}
           {!loading && custom.length > 0 && (
             <div>
-              <h3 className="mb-2 text-sm font-bold uppercase tracking-wide text-slate-400">Saved custom voices</h3>
-              <ul className="space-y-2">{custom.map((v) => voiceRow(v, true))}</ul>
+              <h3 className="mb-2 text-sm font-bold uppercase tracking-wide text-slate-400">Your voices &amp; character voices</h3>
+              <ul className="space-y-2">{custom.map((v) => voiceRow(v, Boolean(v.removable)))}</ul>
             </div>
           )}
           {!loading && pasted.length > 0 && (
@@ -364,21 +431,26 @@ export function VoiceBox({ active, onSelect, onAuthError }: Props) {
               <h3 className="mb-2 text-sm font-bold uppercase tracking-wide text-slate-400">Voice IDs you added</h3>
               <ul className="space-y-2">
                 {pasted.map((p) => (
-                  <li key={p.id} className={`flex items-center gap-3 rounded-lg border px-3 py-2 ${active.id === p.id ? "border-indigo-400 bg-indigo-500/10" : "border-slate-700"}`}>
-                    <div className="min-w-0 flex-1 truncate font-semibold">{p.label}</div>
-                    <button className={ghost} onClick={() => void testVoice(p.id)}>
-                      Test Voice
-                    </button>
-                    {active.id === p.id ? (
-                      <span className="rounded-full bg-indigo-500 px-3 py-1 text-xs font-bold">In use</span>
-                    ) : (
-                      <button className={primary} onClick={() => onSelect(p)}>
-                        Use
+                  <li key={p.id} className={rowClass(active.id === p.id)} aria-current={active.id === p.id ? "true" : undefined}>
+                    <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 sm:flex-1">
+                      <span className={nameClass} title={p.label}>
+                        {p.label}
+                      </span>
+                      {active.id === p.id && inUseBadge}
+                    </div>
+                    <div className="flex shrink-0 flex-wrap gap-2">
+                      <button className={ghost} onClick={() => void testVoice(p.id)} disabled={busy === `test-${p.id}`} aria-label={`Test ${p.label}`}>
+                        {busy === `test-${p.id}` ? "Loading…" : "Test Voice"}
                       </button>
-                    )}
-                    <button className={ghost} onClick={() => removePasted(p.id)} aria-label={`Remove ${p.label}`}>
-                      ✕
-                    </button>
+                      {active.id !== p.id && (
+                        <button className={primary} onClick={() => onSelect(p)} aria-label={`Use ${p.label}`}>
+                          Use
+                        </button>
+                      )}
+                      <button className={ghost} onClick={() => removePasted(p.id)} aria-label={`Remove ${p.label} from this list`}>
+                        Remove
+                      </button>
+                    </div>
                   </li>
                 ))}
               </ul>
@@ -443,11 +515,12 @@ export function VoiceBox({ active, onSelect, onAuthError }: Props) {
         <div className="mt-4 grid gap-6 md:grid-cols-2">
           <div className="space-y-3">
             <h3 className="font-bold">Create a voice from a recording</h3>
-            {slots && (
-              <p className={`text-sm ${slots.used >= slots.limit ? "font-semibold text-amber-300" : "text-slate-400"}`}>
-                Voice slots: {slots.used} of {slots.limit} used.
-                {slots.used >= slots.limit && " All slots are full. Remove a saved custom voice in the first tab before cloning."}
-                {!slots.canClone && " Your ElevenLabs plan doesn't include voice cloning."}
+            {(mine || slots) && (
+              <p className={`text-sm ${(mine?.limit != null && mine.used >= mine.limit) || (slots && slots.used >= slots.limit) ? "font-semibold text-amber-300" : "text-slate-400"}`}>
+                {mine && (mine.limit == null ? `You have ${mine.used} saved ${mine.used === 1 ? "voice" : "voices"}.` : `Your saved voices: ${mine.used} of ${mine.limit}.`)}
+                {mine?.limit != null && mine.used >= mine.limit && " Remove one of yours before making another."}
+                {slots && slots.used >= slots.limit && " The app's shared voice slots are full right now, so new voices can't be saved."}
+                {slots && !slots.canClone && " The app's ElevenLabs plan doesn't include voice cloning."}
               </p>
             )}
             <input className={input} placeholder="Voice name (e.g. Mom)" value={cloneName} onChange={(e) => setCloneName(e.target.value)} />
@@ -502,17 +575,19 @@ export function VoiceBox({ active, onSelect, onAuthError }: Props) {
               {busy === "clone" ? "Creating voice…" : "Create voice"}
             </button>
             {(() => {
-              // The most recently made voice (cloned or designed); library voices aren't included.
+              // The most recent voice this person made (shared character voices aren't included).
               const last = custom
-                .filter((v) => v.category === "cloned" || v.category === "generated")
+                .filter((v) => v.removable && (v.mine || v.category === "cloned"))
                 .sort((a, b) => (b.created_at_unix ?? 0) - (a.created_at_unix ?? 0))[0];
               return last ? (
-                <button className={`${ghost} w-full`} onClick={() => void removeVoice(last.voice_id, last.name)} disabled={busy === `remove-${last.voice_id}`}>
+                <button className={`${ghost} w-full [overflow-wrap:anywhere]`} title={last.name} onClick={() => void removeVoice(last.voice_id, last.name)} disabled={busy === `remove-${last.voice_id}`}>
                   {busy === `remove-${last.voice_id}` ? "Removing…" : `Remove last voice made (${last.name})`}
                 </button>
               ) : null;
             })()}
-            <p className="text-xs text-slate-400">Uses ElevenLabs Instant Voice Cloning (paid plan). The new voice appears in your saved custom voices and is set as active.</p>
+            <p className="text-xs text-slate-400">
+              Uses ElevenLabs Instant Voice Cloning. The new voice is private to your Google account: other people using this app can&apos;t see, play, or remove it.
+            </p>
           </div>
           <div className="space-y-3">
             <h3 className="font-bold">Or use an existing voice ID</h3>

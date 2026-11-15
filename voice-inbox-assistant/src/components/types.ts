@@ -5,6 +5,10 @@ export interface VoiceOption {
   description?: string;
   preview_url?: string | null;
   created_at_unix?: number | null;
+  /** True when the signed-in person may delete it (their own voice, or any shared one for admins). */
+  removable?: boolean;
+  /** True when the signed-in person made it. */
+  mine?: boolean;
 }
 
 export interface ActiveVoice {
@@ -18,6 +22,9 @@ export interface QueueItem {
   subject: string;
   category: "work" | "personal" | "transactions";
   group: "work" | "school" | "personal" | "transactions" | "skipped";
+  /** The summary with no lead-in or ordering words; the player adds them for the list being played. */
+  body: string;
+  /** Spoken text for the All tab (server-built); the player recomputes it per tab. */
   summary: string;
 }
 

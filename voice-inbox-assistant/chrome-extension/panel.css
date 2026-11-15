@@ -28,12 +28,61 @@ body {
   border-radius: 8px;
 }
 
-#retry {
+#offline strong {
+  overflow-wrap: anywhere;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+button {
+  min-height: 44px;
   padding: 10px 16px;
   border: 0;
   border-radius: 8px;
   background: #6366f1;
   color: #fff;
+  font: inherit;
   font-weight: 600;
   cursor: pointer;
+}
+
+button.secondary {
+  background: transparent;
+  border: 1px solid #475569;
+  color: #e2e8f0;
+}
+
+/* Options page */
+.options {
+  max-width: 520px;
+  padding: 24px;
+}
+
+.options label {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  min-height: 44px;
+  padding: 10px 12px;
+  margin: 8px 0;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.options input {
+  margin-top: 4px;
+}
+
+.options small {
+  display: block;
+  color: #94a3b8;
+}
+
+#saved {
+  color: #6ee7b7;
 }

@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Voice Inbox Assistant options</title>
+    <link rel="stylesheet" href="panel.css" />
+  </head>
+  <body>
+    <main class="options">
+      <h1>Which Voice Inbox Assistant?</h1>
+      <form id="form">
+        <label>
+          <input type="radio" name="server" value="local" />
+          <span>This computer <small>http://localhost:3000 (run <code>npm.cmd run dev</code> first)</small></span>
+        </label>
+        <label>
+          <input type="radio" name="server" value="live" />
+          <span>vocamain.biz <small>https://vocamain.biz (the hosted app)</small></span>
+        </label>
+      </form>
+      <p id="saved" role="status"></p>
+    </main>
+    <script src="options.js"></script>
+  </body>
+</html>

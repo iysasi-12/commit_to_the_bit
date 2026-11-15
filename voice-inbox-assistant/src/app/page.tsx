@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { auth } from "@/auth";
 import { signInWithGoogle } from "@/app/actions";
 import { Dashboard } from "@/components/Dashboard";
@@ -19,14 +20,17 @@ export default async function Home() {
         </form>
         <p className="mt-4 rounded-lg bg-slate-800 px-4 py-3 text-sm text-slate-300">
           In the Gmail side panel? Google won&apos;t show its sign-in page inside a panel.{" "}
-          <a href="http://localhost:3000/" target="_blank" rel="noreferrer" className="font-semibold text-indigo-300 underline">
+          <a href="/" target="_blank" rel="noreferrer" className="font-semibold text-indigo-300 underline">
             Sign in in a new tab
           </a>
           , then close that tab and reopen the side panel.
         </p>
         <p className="mt-6 text-sm text-slate-400">
           Read-only Gmail access. Email text is sent to Google Gemini to write the summaries, and summary text is sent to ElevenLabs to speak them. Nothing is stored on the
-          server.
+          server.{" "}
+          <Link href="/privacy" className="font-semibold text-indigo-300 underline">
+            Privacy policy
+          </Link>
         </p>
       </main>
     );

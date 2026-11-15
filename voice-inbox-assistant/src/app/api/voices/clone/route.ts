@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { ApiError, errorResponse } from "@/lib/errors";
 import { eleven } from "@/lib/elevenlabs";
-import { requireSignedIn } from "@/lib/server-auth";
+import { requireViewer } from "@/lib/server-auth";
+import { assertRoomForAnotherVoice, forgetVoiceCache, tagDescription } from "@/lib/voices";
 
 export const maxDuration = 120;
 
@@ -16,7 +17,7 @@ const ALLOWED = ["mp3", "wav", "m4a", "mp4", "aac", "webm", "ogg", "oga", "flac"
  */
 export async function POST(req: Request) {
   try {
-    await requireSignedIn(req);
+    const me = await requireViewer(req);
     const form = await req.formData().catch(() => null);
     if (!form) throw new ApiError(400, "BAD_FORM", "Add a recording and a voice name.");
     if (form.get("consent") !== "true") {
@@ -36,14 +37,17 @@ export async function POST(req: Request) {
       total += f.size;
     }
     if (total < MIN_BYTES) throw new ApiError(400, "TOO_SHORT", "That recording is too short. Record at least 30 seconds of clear speech (1 to 2 minutes is best).");
+    await assertRoomForAnotherVoice(me);
     const upstream = new FormData();
     upstream.append("name", name);
-    upstream.append("description", "Created in Voice Inbox Assistant from the owner's own recording.");
+    // The owner tag keeps this clone private to the person who made it.
+    upstream.append("description", tagDescription("Created in Voice Inbox Assistant from the owner's own recording.", me.owner));
     upstream.append("remove_background_noise", form.get("removeNoise") === "true" ? "true" : "false");
     for (const f of files) upstream.append("files", f, f.name);
     const res = await eleven(`/v1/voices/add`, { method: "POST", body: upstream });
     const json = (await res.json()) as { voice_id?: string; requires_verification?: boolean };
     if (!json.voice_id) throw new ApiError(502, "NO_VOICE_ID", "ElevenLabs didn't return the new voice.");
+    forgetVoiceCache();
     return NextResponse.json({ voice_id: json.voice_id, name, requires_verification: Boolean(json.requires_verification) });
   } catch (err) {
     return errorResponse(err);

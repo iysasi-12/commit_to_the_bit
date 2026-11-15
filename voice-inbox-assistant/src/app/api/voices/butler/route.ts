@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { ApiError, errorResponse } from "@/lib/errors";
 import { eleven } from "@/lib/elevenlabs";
 import { requireSignedIn } from "@/lib/server-auth";
+import { forgetVoiceCache, listAccountVoices, ownerOf } from "@/lib/voices";
 
 export const maxDuration = 120;
 
@@ -17,8 +18,8 @@ const PREVIEW_TEXT =
 export async function POST(req: Request) {
   try {
     await requireSignedIn(req);
-    const search = await eleven(`/v2/voices?page_size=100&search=${encodeURIComponent("Butler")}&include_total_count=false`);
-    const found = ((await search.json()) as { voices?: Array<{ voice_id: string; name: string }> }).voices?.find((v) => v.name === BUTLER_NAME);
+    // The Butler is a shared character voice (no owner tag), created once for everyone.
+    const found = (await listAccountVoices({ fresh: true })).find((v) => v.name === BUTLER_NAME && !ownerOf(v.description));
     if (found) return NextResponse.json({ voice_id: found.voice_id, name: BUTLER_NAME, created: false });
 
     const design = await eleven(`/v1/text-to-voice/design?output_format=mp3_44100_128`, {
@@ -35,6 +36,7 @@ export async function POST(req: Request) {
     });
     const json = (await created.json()) as { voice_id?: string };
     if (!json.voice_id) throw new ApiError(502, "NO_VOICE_ID", "ElevenLabs didn't return The Butler voice.");
+    forgetVoiceCache();
     return NextResponse.json({ voice_id: json.voice_id, name: BUTLER_NAME, created: true });
   } catch (err) {
     return errorResponse(err);
