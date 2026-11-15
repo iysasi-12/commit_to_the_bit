@@ -44,6 +44,72 @@ export function VoiceBox({ active, onSelect, onAuthError }: Props) {
   const [idLabel, setIdLabel] = useState("");
   const [cloneName, setCloneName] = useState("");
   const [cloneFile, setCloneFile] = useState<File | null>(null);
+  const [cloneUrl, setCloneUrl] = useState<string | null>(null);
+  const [consent, setConsent] = useState(false);
+  const [removeNoise, setRemoveNoise] = useState(false);
+  const [slots, setSlots] = useState<{ used: number; limit: number; canClone: boolean } | null>(null);
+  const [recording, setRecording] = useState(false);
+  const [seconds, setSeconds] = useState(0);
+  const recorder = useRef<MediaRecorder | null>(null);
+  const chunks = useRef<Blob[]>([]);
+  const timer = useRef<number | null>(null);
+
+  function setTake(file: File) {
+    if (cloneUrl) URL.revokeObjectURL(cloneUrl);
+    setCloneFile(file);
+    setCloneUrl(URL.createObjectURL(file));
+  }
+
+  async function startRecording() {
+    setError(null);
+    if (!navigator.mediaDevices?.getUserMedia) return setError("This browser can't record here. Upload an audio file instead.");
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+    } catch {
+      return setError("Microphone access was blocked. Allow the microphone for this site, or upload a file instead.");
+    }
+    const mime = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg"].find((m) => MediaRecorder.isTypeSupported(m)) ?? "";
+    const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+    chunks.current = [];
+    rec.ondataavailable = (e) => e.data.size > 0 && chunks.current.push(e.data);
+    rec.onstop = () => {
+      stream.getTracks().forEach((t) => t.stop());
+      if (timer.current) window.clearInterval(timer.current);
+      const type = rec.mimeType || mime || "audio/webm";
+      const ext = type.includes("mp4") ? "m4a" : type.includes("ogg") ? "ogg" : "webm";
+      setTake(new File([new Blob(chunks.current, { type })], `recording.${ext}`, { type }));
+      setRecording(false);
+    };
+    recorder.current = rec;
+    rec.start(1000);
+    setSeconds(0);
+    setRecording(true);
+    const started = Date.now();
+    timer.current = window.setInterval(() => {
+      const s = Math.floor((Date.now() - started) / 1000);
+      setSeconds(s);
+      if (s >= 180 && rec.state === "recording") rec.stop(); // more than 3 minutes doesn't help
+    }, 250);
+  }
+
+  function stopRecording() {
+    if (recorder.current?.state === "recording") recorder.current.stop();
+  }
+
+  async function removeVoice(id: string, name: string) {
+    if (!window.confirm(`Delete "${name}" from your ElevenLabs account? This frees a voice slot and can't be undone.`)) return;
+    setError(null);
+    setBusy(`remove-${id}`);
+    try {
+      const res = await fetch(`/api/voices/${encodeURIComponent(id)}`, { method: "DELETE" });
+      if (!res.ok) return void (await fail(res));
+      setNotice(`Deleted "${name}".`);
+      await loadVoices();
+    } finally {
+      setBusy(null);
+    }
+  }
 
   const fail = useCallback(
     async (res: Response) => {
@@ -60,7 +126,8 @@ export function VoiceBox({ active, onSelect, onAuthError }: Props) {
     try {
       const res = await fetch("/api/voices");
       if (!res.ok) return void (await fail(res));
-      const json = (await res.json()) as { custom: VoiceOption[]; presets: VoiceOption[] };
+      const json = (await res.json()) as { custom: VoiceOption[]; presets: VoiceOption[]; slots: { used: number; limit: number; canClone: boolean } | null };
+      setSlots(json.slots);
       setCustom(json.custom);
       setPresets(json.presets);
       if (!storageGet<ActiveVoice | null>("via.voice", null) && json.presets[0]) {
@@ -178,13 +245,16 @@ export function VoiceBox({ active, onSelect, onAuthError }: Props) {
   }
 
   async function clone() {
-    if (!cloneFile || !cloneName.trim()) return setError("Add a voice name and an .mp3 or .wav file.");
+    if (!cloneFile || !cloneName.trim()) return setError("Add a voice name and a recording (record one or upload a file).");
+    if (!consent) return setError("Tick the box confirming it's your voice or you have permission.");
     setError(null);
     setNotice(null);
     setBusy("clone");
     try {
       const form = new FormData();
       form.append("name", cloneName.trim());
+      form.append("consent", "true");
+      form.append("removeNoise", String(removeNoise));
       form.append("files", cloneFile, cloneFile.name);
       const res = await fetch("/api/voices/clone", { method: "POST", body: form });
       if (!res.ok) return void (await fail(res));
@@ -195,13 +265,17 @@ export function VoiceBox({ active, onSelect, onAuthError }: Props) {
       );
       setCloneName("");
       setCloneFile(null);
+      if (cloneUrl) URL.revokeObjectURL(cloneUrl);
+      setCloneUrl(null);
+      setConsent(false);
+      setTab("voices");
       await loadVoices();
     } finally {
       setBusy(null);
     }
   }
 
-  const voiceRow = (v: VoiceOption) => {
+  const voiceRow = (v: VoiceOption, removable = false) => {
     const selected = active.id === v.voice_id;
     return (
       <li key={v.voice_id} className={`flex items-center gap-3 rounded-lg border px-3 py-2 ${selected ? "border-indigo-400 bg-indigo-500/10" : "border-slate-700"}`}>
@@ -217,6 +291,11 @@ export function VoiceBox({ active, onSelect, onAuthError }: Props) {
         ) : (
           <button className={primary} onClick={() => onSelect({ id: v.voice_id, label: v.name })}>
             Use
+          </button>
+        )}
+        {removable && (
+          <button className={ghost} onClick={() => void removeVoice(v.voice_id, v.name)} disabled={busy === `remove-${v.voice_id}`} aria-label={`Delete ${v.name}`}>
+            {busy === `remove-${v.voice_id}` ? "…" : "Remove"}
           </button>
         )}
       </li>
@@ -239,7 +318,7 @@ export function VoiceBox({ active, onSelect, onAuthError }: Props) {
           [
             ["voices", "Preset & account voices"],
             ["design", "Design a voice"],
-            ["custom", "Voice ID & clone"],
+            ["custom", "Clone a voice"],
           ] as Array<[Tab, string]>
         ).map(([id, label]) => (
           <button key={id} role="tab" aria-selected={tab === id} className={tab === id ? primary : ghost} onClick={() => setTab(id)}>
@@ -276,7 +355,7 @@ export function VoiceBox({ active, onSelect, onAuthError }: Props) {
           {!loading && custom.length > 0 && (
             <div>
               <h3 className="mb-2 text-sm font-bold uppercase tracking-wide text-slate-400">Saved custom voices</h3>
-              <ul className="space-y-2">{custom.map(voiceRow)}</ul>
+              <ul className="space-y-2">{custom.map((v) => voiceRow(v, true))}</ul>
             </div>
           )}
           {!loading && pasted.length > 0 && (
@@ -307,7 +386,7 @@ export function VoiceBox({ active, onSelect, onAuthError }: Props) {
           {!loading && (
             <div>
               <h3 className="mb-2 text-sm font-bold uppercase tracking-wide text-slate-400">ElevenLabs presets</h3>
-              <ul className="max-h-80 space-y-2 overflow-y-auto pr-1">{presets.map(voiceRow)}</ul>
+              <ul className="max-h-80 space-y-2 overflow-y-auto pr-1">{presets.map((v) => voiceRow(v))}</ul>
             </div>
           )}
         </div>
@@ -362,7 +441,69 @@ export function VoiceBox({ active, onSelect, onAuthError }: Props) {
       {tab === "custom" && (
         <div className="mt-4 grid gap-6 md:grid-cols-2">
           <div className="space-y-3">
-            <h3 className="font-bold">Use a voice ID</h3>
+            <h3 className="font-bold">Create a voice from a recording</h3>
+            {slots && (
+              <p className={`text-sm ${slots.used >= slots.limit ? "font-semibold text-amber-300" : "text-slate-400"}`}>
+                Voice slots: {slots.used} of {slots.limit} used.
+                {slots.used >= slots.limit && " All slots are full. Remove a saved custom voice in the first tab before cloning."}
+                {!slots.canClone && " Your ElevenLabs plan doesn't include voice cloning."}
+              </p>
+            )}
+            <input className={input} placeholder="Voice name (e.g. Mom)" value={cloneName} onChange={(e) => setCloneName(e.target.value)} />
+            <details className="rounded-lg bg-slate-800/60 px-3 py-2 text-sm text-slate-300">
+              <summary className="cursor-pointer font-semibold">Script to read (about 1 minute)</summary>
+              <p className="mt-2 leading-relaxed">
+                Hi, this is me recording my voice. This morning I checked the weather, made breakfast, and looked at my calendar. There&apos;s a meeting at ten thirty, a
+                dentist appointment on Thursday, and dinner with friends on Saturday night. I still need to finish my lab report, which is due Monday at midnight. Some
+                emails are important, and others are just sales and newsletters. Did the package arrive yet? The total came to forty-two dollars and eighty cents. Thanks
+                for listening, and have a wonderful day.
+              </p>
+            </details>
+            <div className="flex flex-wrap items-center gap-3">
+              {recording ? (
+                <button className={`${btn} bg-rose-500 text-white hover:bg-rose-400`} onClick={stopRecording}>
+                  ■ Stop ({Math.floor(seconds / 60)}:{String(seconds % 60).padStart(2, "0")})
+                </button>
+              ) : (
+                <button className={primary} onClick={() => void startRecording()} disabled={busy === "clone"}>
+                  ● {cloneFile ? "Record again" : "Record"}
+                </button>
+              )}
+              <label className={`${ghost} cursor-pointer`}>
+                Upload file
+                <input
+                  type="file"
+                  accept="audio/*,.mp3,.wav,.m4a,.webm,.ogg,.flac"
+                  className="sr-only"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) setTake(f);
+                  }}
+                />
+              </label>
+            </div>
+            {recording && <p className="text-xs text-slate-400">Speak naturally in a quiet room. 1 to 2 minutes works best; it stops by itself at 3 minutes.</p>}
+            {cloneUrl && !recording && (
+              <div className="space-y-1">
+                <div className="text-xs text-slate-400">{cloneFile?.name}</div>
+                <audio controls className="w-full" src={cloneUrl} />
+              </div>
+            )}
+            <label className="flex items-start gap-2 text-sm">
+              <input type="checkbox" className="mt-1 h-4 w-4 accent-indigo-500" checked={removeNoise} onChange={(e) => setRemoveNoise(e.target.checked)} />
+              Remove background noise <span className="text-slate-400">(only if it&apos;s noisy)</span>
+            </label>
+            <label className="flex items-start gap-2 text-sm">
+              <input type="checkbox" className="mt-1 h-4 w-4 accent-indigo-500" checked={consent} onChange={(e) => setConsent(e.target.checked)} />
+              This is my own voice, or I have the speaker&apos;s permission to clone it.
+            </label>
+            <button className={primary} onClick={() => void clone()} disabled={busy === "clone" || recording || !cloneFile || !cloneName.trim() || !consent}>
+              {busy === "clone" ? "Creating voice…" : "Create voice"}
+            </button>
+            <p className="text-xs text-slate-400">Uses ElevenLabs Instant Voice Cloning (paid plan). The new voice appears in your saved custom voices and is set as active.</p>
+          </div>
+          <div className="space-y-3">
+            <h3 className="font-bold">Or use an existing voice ID</h3>
             <input className={input} placeholder="ElevenLabs voice_id" value={idInput} onChange={(e) => setIdInput(e.target.value)} />
             <input className={input} placeholder="Label (e.g. Grandpa)" value={idLabel} onChange={(e) => setIdLabel(e.target.value)} />
             <div className="flex gap-2">
@@ -373,23 +514,6 @@ export function VoiceBox({ active, onSelect, onAuthError }: Props) {
                 Set as active voice
               </button>
             </div>
-          </div>
-          <div className="space-y-3">
-            <h3 className="font-bold">Instant Voice Clone from a recording</h3>
-            <input className={input} placeholder="Voice name" value={cloneName} onChange={(e) => setCloneName(e.target.value)} />
-            <input
-              type="file"
-              accept=".mp3,.wav,audio/mpeg,audio/wav"
-              className="block w-full text-sm text-slate-300 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-700 file:px-3 file:py-2 file:text-slate-100"
-              onChange={(e) => setCloneFile(e.target.files?.[0] ?? null)}
-            />
-            <button className={primary} onClick={() => void clone()} disabled={busy === "clone" || !cloneFile || !cloneName.trim()}>
-              {busy === "clone" ? "Cloning…" : "Clone voice"}
-            </button>
-            <p className="text-xs text-slate-400">
-              Only clone your own voice or one you have permission to use. Instant Voice Cloning needs a paid ElevenLabs Starter or Creator plan; standard voices and Voice Design
-              work on regular API keys. 1 to 2 minutes of clear speech works best.
-            </p>
           </div>
         </div>
       )}

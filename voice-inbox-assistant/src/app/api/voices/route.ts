@@ -37,7 +37,16 @@ export async function GET(req: Request) {
       preview_url: v.preview_url ?? null,
       labels: v.labels ?? {},
     });
+    // Voice slots and cloning access, so the UI can explain why a clone would fail.
+    let slots: { used: number; limit: number; canClone: boolean } | null = null;
+    try {
+      const sub = (await (await eleven("/v1/user/subscription")).json()) as { voice_slots_used?: number; voice_limit?: number; can_use_instant_voice_cloning?: boolean };
+      slots = { used: sub.voice_slots_used ?? 0, limit: sub.voice_limit ?? 0, canClone: Boolean(sub.can_use_instant_voice_cloning) };
+    } catch {
+      slots = null; // key may lack the user-read permission; cloning still works without this info
+    }
     return NextResponse.json({
+      slots,
       custom: voices.filter((v) => v.category !== "premade").map(simplify),
       presets: voices.filter((v) => v.category === "premade").map(simplify),
     });

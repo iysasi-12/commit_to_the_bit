@@ -6,25 +6,40 @@ import { requireSignedIn } from "@/lib/server-auth";
 export const maxDuration = 120;
 
 const MAX_BYTES = 10 * 1024 * 1024;
+const MIN_BYTES = 20 * 1024;
+// Uploads and in-browser recordings (Chrome records WebM, Safari records MP4/M4A).
+const ALLOWED = ["mp3", "wav", "m4a", "mp4", "aac", "webm", "ogg", "oga", "flac"];
 
-/** POST multipart { name, files[] (.mp3/.wav) } → Instant Voice Clone via ElevenLabs /v1/voices/add. */
+/**
+ * POST multipart { name, consent="true", files[] } → creates a voice from the recording with
+ * ElevenLabs Instant Voice Cloning (/v1/voices/add). Requires a paid ElevenLabs plan.
+ */
 export async function POST(req: Request) {
   try {
     await requireSignedIn(req);
     const form = await req.formData().catch(() => null);
-    if (!form) throw new ApiError(400, "BAD_FORM", "Upload a recording and a voice name.");
+    if (!form) throw new ApiError(400, "BAD_FORM", "Add a recording and a voice name.");
+    if (form.get("consent") !== "true") {
+      throw new ApiError(400, "NO_CONSENT", "Confirm that this is your voice, or that you have the speaker's permission, before cloning.");
+    }
     const name = String(form.get("name") ?? "").trim().slice(0, 100);
     if (!name) throw new ApiError(400, "NO_NAME", "Give the voice a name.");
     const files = form.getAll("files").filter((f): f is File => f instanceof File && f.size > 0);
-    if (files.length === 0) throw new ApiError(400, "NO_FILE", "Choose an .mp3 or .wav recording.");
+    if (files.length === 0) throw new ApiError(400, "NO_FILE", "Record yourself or choose an audio file first.");
+    let total = 0;
     for (const f of files) {
-      const ext = f.name.toLowerCase().split(".").pop();
-      if (!["mp3", "wav"].includes(ext ?? "")) throw new ApiError(415, "BAD_FILE_TYPE", `${f.name} isn't an .mp3 or .wav file.`);
+      const ext = f.name.toLowerCase().split(".").pop() ?? "";
+      if (!ALLOWED.includes(ext) && !f.type.startsWith("audio/")) {
+        throw new ApiError(415, "BAD_FILE_TYPE", `${f.name} isn't an audio file. Use MP3, WAV, M4A, WebM, OGG or FLAC.`);
+      }
       if (f.size > MAX_BYTES) throw new ApiError(413, "FILE_TOO_LARGE", `${f.name} is over 10 MB. About 1 to 2 minutes of speech is enough.`);
+      total += f.size;
     }
+    if (total < MIN_BYTES) throw new ApiError(400, "TOO_SHORT", "That recording is too short. Record at least 30 seconds of clear speech (1 to 2 minutes is best).");
     const upstream = new FormData();
     upstream.append("name", name);
-    upstream.append("remove_background_noise", "false");
+    upstream.append("description", "Created in Voice Inbox Assistant from the owner's own recording.");
+    upstream.append("remove_background_noise", form.get("removeNoise") === "true" ? "true" : "false");
     for (const f of files) upstream.append("files", f, f.name);
     const res = await eleven(`/v1/voices/add`, { method: "POST", body: upstream });
     const json = (await res.json()) as { voice_id?: string; requires_verification?: boolean };
