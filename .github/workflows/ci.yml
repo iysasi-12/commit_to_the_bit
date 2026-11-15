@@ -111,6 +111,16 @@ jobs:
       - name: Build (includes the TypeScript check)
         run: npm run build
 
+      - name: Sensitive emails are never read (fake Gmail + fake Gemini, end to end)
+        run: |
+          # Throwaway values: the fake Gmail/Gemini on 127.0.0.1:4010 ignore keys.
+          printf 'AUTH_SECRET=%s\nGEMINI_API_KEY=fake\nELEVENLABS_API_KEY=fake\nGOOGLE_CLIENT_ID=fake\nGOOGLE_CLIENT_SECRET=fake\n' "$(openssl rand -hex 32)" > .env.local
+          AUTH_URL=http://localhost:3300 NEXTAUTH_URL=http://localhost:3300 \
+            GMAIL_API_ROOT=http://127.0.0.1:4010/ GEMINI_API_BASE=http://127.0.0.1:4010 \
+            npx next start -p 3300 > next.log 2>&1 &
+          for i in $(seq 1 30); do curl -fsS http://localhost:3300/api/health >/dev/null 2>&1 && break; sleep 1; done
+          npm run check:sensitive -- http://localhost:3300 || { cat next.log; exit 1; }
+
   web-docker:
     name: "Voice Inbox Assistant: image builds and boots"
     runs-on: ubuntu-latest

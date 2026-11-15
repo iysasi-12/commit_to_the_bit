@@ -25,7 +25,7 @@ const RULES: Record<SensitiveKind, { senders: RegExp; subjects: RegExp }> = {
   security: {
     senders: /^$/, // decided by subject only
     subjects:
-      /\b(verification code|security code|one-?time (code|password|passcode)|otp|password reset|reset your password|2-?step|two-?factor|sign-?in code|login code|confirm your identity)\b/i,
+      /\b(verification code|security code|one-?time (code|password|passcode)|otp|password reset|reset your password|2-?step|two-?factor|sign-?in code|login code|confirm your identity|security alert|new sign-?in|sign-?in attempt|login attempt|suspicious (sign-?in|login|activity)|account recovery|recovery code)\b/i,
   },
 };
 
@@ -40,6 +40,32 @@ export function sensitiveKind(from: string, subject: string): SensitiveKind | nu
   return null;
 }
 
+/** The two Gmail calls the scan needs. `headers` must fetch only sender and subject. */
+export interface InboxSource<T> {
+  listIds(count: number): Promise<string[]>;
+  headers(id: string): Promise<{ id: string; from: string; subject: string }>;
+  fullEmail(id: string): Promise<T>;
+}
+
+/**
+ * Reads the newest emails, skipping sensitive ones: every email's sender and subject are read
+ * first, and only emails that are NOT sensitive are downloaded in full. A sensitive email's body
+ * is never requested, so it can't reach Gemini, the screen or the voice; only its kind is counted.
+ */
+export async function scanWithoutSensitive<T>(source: InboxSource<T>, count: number): Promise<{ emails: T[]; sensitive: Partial<Record<SensitiveKind, number>>; fetched: number }> {
+  const ids = await source.listIds(count);
+  const heads = await Promise.all(ids.map((id) => source.headers(id)));
+  const sensitive: Partial<Record<SensitiveKind, number>> = {};
+  const safeIds: string[] = [];
+  for (const h of heads) {
+    const kind = sensitiveKind(h.from, h.subject);
+    if (kind) sensitive[kind] = (sensitive[kind] ?? 0) + 1;
+    else safeIds.push(h.id);
+  }
+  const emails = await Promise.all(safeIds.map((id) => source.fullEmail(id)));
+  return { emails, sensitive, fetched: ids.length };
+}
+
 const LABEL: Record<SensitiveKind, [string, string]> = {
   financial: ["banking or financial email", "banking or financial emails"],
   medical: ["medical or health email", "medical or health emails"],
@@ -47,7 +73,7 @@ const LABEL: Record<SensitiveKind, [string, string]> = {
   security: ["security code or password email", "security code or password emails"],
 };
 
-const NUMBER_WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"];
+const NUMBER_WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen", "twenty"];
 const say = (n: number) => NUMBER_WORDS[n] ?? String(n);
 
 /** The spoken note at the end, e.g. "I skipped three sensitive emails: two banking or financial emails and one medical or health email..." */

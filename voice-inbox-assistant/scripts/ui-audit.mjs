@@ -4,7 +4,10 @@
 //
 // For each of 13 sizes (phones, tablets, desktop; portrait and landscape) it checks for
 // sideways scrolling, content off-screen, cut-off text and voice names, and tap targets under
-// 40px, in the Voice Box (all three tabs) and the player.
+// 40px, in the Voice Box (all three tabs) and the player. It also checks that the styles were
+// applied, that the app's scripts run (a tab click switches the player and its spoken text),
+// and that no script error, console error or failed page/CSS/JS/font load happened.
+// Self-test: UI_AUDIT_BLOCK=css or UI_AUDIT_BLOCK=js blocks those files, so the audit must fail.
 // MOCK DATA, no credits: /api/emails and /api/tts are faked inside the page. /api/voices is the
 // real list plus one fake, very long voice name to stress the layout. Signs in as a fake test
 // user with the site's AUTH_SECRET (.env.live for the live site, .env.local for localhost).
@@ -54,7 +57,13 @@ if (!CHROME) {
   process.exit(1);
 }
 const PORT = 9333;
-const chrome = spawn(CHROME, ["--headless=new", `--remote-debugging-port=${PORT}`, `--user-data-dir=${join(OUT, "profile")}`, "--no-first-run", "--no-default-browser-check", "--autoplay-policy=no-user-gesture-required", "--hide-scrollbars", "about:blank"], { stdio: "ignore" });
+// https://localhost (the server stack run on this computer) uses Caddy's local certificate.
+const localHttps = isLocal && BASE.startsWith("https");
+const chrome = spawn(
+  CHROME,
+  ["--headless=new", `--remote-debugging-port=${PORT}`, `--user-data-dir=${join(OUT, "profile")}`, "--no-first-run", "--no-default-browser-check", "--autoplay-policy=no-user-gesture-required", "--hide-scrollbars", ...(localHttps ? ["--ignore-certificate-errors"] : []), "about:blank"],
+  { stdio: "ignore" },
+);
 process.on("exit", () => chrome.kill());
 
 for (let i = 0; i < 40; i++) {
@@ -70,6 +79,12 @@ const ws = new WebSocket(target.webSocketDebuggerUrl);
 await new Promise((r) => ws.addEventListener("open", r, { once: true }));
 let nextId = 1;
 const pending = new Map();
+// Problems seen on the current page: script errors, console errors, and page/CSS/JS/font
+// files that failed to load. Reset before each screen size.
+let pageProblems = [];
+const requestUrls = new Map();
+const ASSET_TYPES = new Set(["Document", "Stylesheet", "Script", "Font"]);
+const short = (url) => String(url).replace(BASE, "").slice(0, 80);
 ws.addEventListener("message", (e) => {
   const msg = JSON.parse(e.data);
   if (msg.id && pending.has(msg.id)) {
@@ -77,6 +92,25 @@ ws.addEventListener("message", (e) => {
     pending.delete(msg.id);
     if (msg.error) rej(new Error(msg.error.message));
     else res(msg.result);
+    return;
+  }
+  const p = msg.params ?? {};
+  switch (msg.method) {
+    case "Network.requestWillBeSent":
+      requestUrls.set(p.requestId, p.request?.url);
+      break;
+    case "Network.responseReceived":
+      if (ASSET_TYPES.has(p.type) && p.response?.status >= 400) pageProblems.push(`${p.type} ${short(p.response.url)} answered ${p.response.status}`);
+      break;
+    case "Network.loadingFailed":
+      if (ASSET_TYPES.has(p.type) && !p.canceled) pageProblems.push(`${p.type} ${short(requestUrls.get(p.requestId))} failed: ${p.errorText || p.blockedReason || "blocked"}`);
+      break;
+    case "Runtime.exceptionThrown":
+      pageProblems.push(`script error: ${(p.exceptionDetails?.exception?.description ?? p.exceptionDetails?.text ?? "").split("\n")[0].slice(0, 160)}`);
+      break;
+    case "Runtime.consoleAPICalled":
+      if (p.type === "error") pageProblems.push(`console error: ${(p.args ?? []).map((a) => a.value ?? a.description ?? "").join(" ").slice(0, 160)}`);
+      break;
   }
 });
 const send = (method, params = {}) =>
@@ -152,17 +186,41 @@ const AUDIT = String.raw`(() => {
   return { sideways: document.documentElement.scrollWidth > W, offscreen, cutText, voiceNames: names.length, voiceNamesCut, smallTargets, readingWith };
 })()`;
 
+// Tailwind styles really applied (not just downloaded): the Scan button is filled and rounded,
+// and the page column has its max width.
+const STYLES_APPLIED = String.raw`(() => {
+  const scan = [...document.querySelectorAll("button")].find((b) => b.textContent.includes("Scan & Summarize"));
+  const main = document.querySelector("main");
+  if (!scan || !main) return "Scan button or main column missing";
+  const b = getComputedStyle(scan);
+  const problems = [];
+  if (document.styleSheets.length === 0) problems.push("no stylesheets attached");
+  if (b.backgroundColor === "rgba(0, 0, 0, 0)" || b.backgroundColor === "transparent") problems.push("Scan button has no background color");
+  if (!(parseFloat(b.borderTopLeftRadius) > 0)) problems.push("Scan button isn't rounded");
+  if (getComputedStyle(main).maxWidth === "none") problems.push("page column has no max width");
+  return problems.join("; ");
+})()`;
+
 await send("Page.enable");
 await send("Network.enable");
+await send("Runtime.enable");
+const block = process.env.UI_AUDIT_BLOCK;
+if (block === "css" || block === "js") {
+  await send("Network.setBlockedURLs", { urls: [block === "css" ? "*.css" : "*/_next/static/*.js"] });
+  console.log(`SELF-TEST: blocking ${block === "css" ? "stylesheets" : "scripts"}; every size should FAIL.\n`);
+}
 // SameSite=None cookies must be Secure, so on plain http (localhost) the cookie is left Lax.
 const https = BASE.startsWith("https");
 await send("Network.setCookie", { name: "authjs.session-token", value: SESSION, url: `${BASE}/`, path: "/", httpOnly: true, ...(https ? { secure: true, sameSite: "None" } : {}) });
 await send("Page.addScriptToEvaluateOnNewDocument", { source: MOCK });
 
-const SIZES = [
+const ALL_SIZES = [
   [320, 568], [375, 812], [390, 844], [430, 932], [768, 1024], [1024, 1366], [1440, 900],
   [568, 320], [812, 375], [844, 390], [932, 430], [1024, 768], [1366, 1024],
 ];
+// UI_AUDIT_SIZES=320x568,1440x900 runs only those sizes.
+const only = (process.env.UI_AUDIT_SIZES ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+const SIZES = only.length ? ALL_SIZES.filter(([w, h]) => only.includes(`${w}x${h}`)) : ALL_SIZES;
 const report = [];
 let problems = 0;
 for (const [width, height] of SIZES) {
@@ -171,6 +229,7 @@ for (const [width, height] of SIZES) {
   const tag = `${width}x${height}`;
   await send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: width >= 1366 && !mobile ? 1 : 2, mobile, screenOrientation: { type: portrait ? "portraitPrimary" : "landscapePrimary", angle: portrait ? 0 : 90 } });
   await send("Emulation.setTouchEmulationEnabled", { enabled: mobile, maxTouchPoints: mobile ? 5 : 1 });
+  pageProblems = [];
   await send("Page.navigate", { url: `${BASE}/` });
   await sleep(800);
   const loadStart = Date.now();
@@ -184,7 +243,9 @@ for (const [width, height] of SIZES) {
   await sleep(200);
   await shot("1-voice-box");
   const issues = [];
-  if (!voicesOk) issues.push("voice list never loaded (signed out? wrong AUTH_SECRET?)");
+  if (!voicesOk) issues.push("voice list never loaded (scripts not running, signed out, or wrong AUTH_SECRET)");
+  const styleProblem = await evaluate(STYLES_APPLIED);
+  if (styleProblem) issues.push(`styles not applied: ${styleProblem}`);
   let playerOk = false;
   if (voicesOk) {
     await evaluate(`[...document.querySelectorAll("button")].find((b) => b.textContent.includes("Scan & Summarize"))?.click()`);
@@ -197,6 +258,14 @@ for (const [width, height] of SIZES) {
     await shot("2-player");
   }
   const views = { "voices + player": await evaluate(AUDIT) };
+  // The app's scripts respond to clicks: the Work tab shows only work emails, with its own intro.
+  if (playerOk) {
+    await evaluate(`[...document.querySelectorAll("[role=tab]")].find((b) => b.textContent.startsWith("Work"))?.click()`);
+    const switched = await waitFor(`(document.querySelector("#player-h")?.textContent ?? "").startsWith("Work email 1 of 2")`, 5000);
+    const spoken = await evaluate(`document.querySelector("#player-h")?.closest("section")?.querySelector("p.text-lg")?.textContent ?? ""`);
+    if (!switched) issues.push("clicking the Work tab didn't switch the player (scripts not running?)");
+    else if (!spoken.startsWith("You have two work emails. First,")) issues.push(`Work tab spoken text is wrong: "${spoken.slice(0, 60)}"`);
+  }
   for (const label of ["Design a voice", "Clone a voice"]) {
     await evaluate(`[...document.querySelectorAll("[role=tab]")].find((b) => b.textContent === ${JSON.stringify(label)})?.click()`);
     await sleep(300);
@@ -209,6 +278,7 @@ for (const [width, height] of SIZES) {
     if (a.voiceNamesCut.length) issues.push(`${view}: cut-off voice names ${a.voiceNamesCut.join("; ")}`);
     if (a.smallTargets.length) issues.push(`${view}: small tap targets ${a.smallTargets.join("; ")}`);
   }
+  for (const problem of new Set(pageProblems)) issues.push(problem);
   const main = views["voices + player"];
   if (voicesOk && !main.readingWith.startsWith("Supercalifragilistic")) issues.push(`"Reading with" shows "${main.readingWith}" instead of the selected voice`);
   problems += issues.length;
@@ -216,7 +286,7 @@ for (const [width, height] of SIZES) {
   console.log(`${issues.length ? "FAIL" : "PASS"}  ${tag.padEnd(9)} ${portrait ? "portrait " : "landscape"}  ${main.voiceNames} voice names checked, voices loaded in ${(loadMs / 1000).toFixed(1)}s${issues.length ? `\n      ${issues.join("\n      ")}` : ""}`);
 }
 writeFileSync(join(OUT, "report.json"), JSON.stringify({ base: BASE, report }, null, 2));
-console.log(`\n${problems ? `FAILED: ${problems} issue(s)` : "All 13 sizes passed"} on ${BASE}. Screenshots and report.json: ${OUT}`);
+console.log(`\n${problems ? `FAILED: ${problems} issue(s)` : `All ${SIZES.length} sizes passed`} on ${BASE}. Screenshots and report.json: ${OUT}`);
 ws.close();
 chrome.kill();
 process.exit(problems ? 1 : 0);

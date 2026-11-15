@@ -54,6 +54,33 @@ async function get(path, init = {}, cookie = "") {
   return { status: res.status, body, json, ms: Math.round(performance.now() - started) };
 }
 
+/** Same-site asset URLs referenced by these pages (deduplicated). */
+async function assetsOf(pages, pattern) {
+  const found = new Set();
+  for (const page of pages) {
+    const { body } = await get(page);
+    for (const m of body.matchAll(pattern)) {
+      const href = (m[1] ?? m[2] ?? "").replace(/&amp;/g, "&");
+      if (href.startsWith("/") && !href.startsWith("//")) found.add(href);
+    }
+  }
+  return [...found];
+}
+
+/** Downloads each asset; returns a description of every one that failed. */
+async function checkAssets(files, typePattern) {
+  const bad = [];
+  await Promise.all(
+    files.map(async (path) => {
+      const res = await fetch(`${base}${path}`, { signal: AbortSignal.timeout(20000) });
+      const type = res.headers.get("content-type") ?? "";
+      const size = (await res.arrayBuffer()).byteLength;
+      if (res.status !== 200 || !typePattern.test(type) || size === 0) bad.push(`${path.slice(0, 60)} -> ${res.status} ${type || "no type"} ${size} bytes`);
+    }),
+  );
+  return bad;
+}
+
 const PUBLIC = [
   ["DNS points at a server", async () => {
     if (isLocal) return [true, "skipped for localhost"];
@@ -84,11 +111,15 @@ const PUBLIC = [
     const r = await get("/");
     return [r.status === 200 && r.body.includes("Sign in with Google"), `${r.status}, ${r.ms} ms`];
   }],
-  ["styles load", async () => {
-    const home = await get("/");
-    const css = home.body.match(/href="(\/_next\/static\/[^"]+\.css)"/)?.[1];
-    const r = css ? await get(css) : { status: 0 };
-    return [r.status === 200, css ?? "no stylesheet link found"];
+  ["every stylesheet loads (home + privacy)", async () => {
+    const files = await assetsOf(["/", "/privacy"], /<link[^>]+rel="stylesheet"[^>]*href="([^"]+)"|<link[^>]+href="([^"]+\.css[^"]*)"[^>]*rel="stylesheet"/g);
+    const bad = await checkAssets(files, /text\/css/);
+    return [files.length > 0 && bad.length === 0, bad.length ? bad.join("; ") : `${files.length} stylesheet(s) OK`];
+  }],
+  ["every script loads (home + privacy)", async () => {
+    const files = await assetsOf(["/", "/privacy"], /<script[^>]+src="([^"]+)"/g);
+    const bad = await checkAssets(files, /javascript/);
+    return [files.length > 0 && bad.length === 0, bad.length ? bad.join("; ") : `${files.length} script(s) OK`];
   }],
   ["privacy policy loads", async () => {
     const r = await get("/privacy");

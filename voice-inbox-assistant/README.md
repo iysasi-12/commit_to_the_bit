@@ -58,6 +58,20 @@ npm.cmd run check:ui -- https://vocamail.biz
 - `check:live` runs 18 checks per round: HTTPS and `www` redirects, health and commit, pages, sign-in callback, signed-out refusals, and signed-in voice privacy using fake test users. Use `http://localhost:3000` for your computer.
 - `check:ui` opens the app in headless Chrome at 13 phone, tablet and desktop sizes (portrait and landscape) with fake inbox data, and fails on sideways scrolling, cut-off text or voice names, or small tap targets. Screenshots go to your temp folder.
 - Both sign in as fake test users with the site's `AUTH_SECRET`: from `.env.local` for localhost, or from `.env.live` (git-ignored) for the live site.
+- `check:ui` also proves the styles were applied and the scripts run (a tab click must switch the player), and fails on any script error or failed CSS/JS load. To see it catch problems, run it with `UI_AUDIT_BLOCK=css` or `UI_AUDIT_BLOCK=js` (it must fail).
+
+**Sensitive emails are never read**, proven end to end:
+
+```bash
+npm.cmd run check:sensitive -- http://localhost:3300
+```
+
+It starts a fake Gmail with 17 sensitive emails (banking, medical, government, security codes; bodies full of fake account numbers and diagnoses) plus 7 ordinary ones, and a fake Gemini that records everything it's sent. It then scans through the app's real `/api/emails` route and checks:
+- no sensitive email is downloaded in full;
+- nothing from one reaches the AI, the screen or the voice;
+- the app only says how many it skipped, by kind.
+
+The app under test must be started with `GMAIL_API_ROOT=http://127.0.0.1:4010/` and `GEMINI_API_BASE=http://127.0.0.1:4010`. These are test-only settings; never set them on the real server. No real inbox or credits are used.
 
 ## Chrome extension (Gmail button)
 

@@ -31,7 +31,9 @@ let client: GoogleGenAI | null = null;
 function getClient(): GoogleGenAI {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new ApiError(503, "GEMINI_NOT_CONFIGURED", "GEMINI_API_KEY is missing from .env.local on the server.");
-  client ??= new GoogleGenAI({ apiKey, httpOptions: { timeout: 30_000, retryOptions: { attempts: 2, initialDelay: 1, maxDelay: 3 } } });
+  // GEMINI_API_BASE is for automated tests only (a fake Gemini on this computer); never set it on the server.
+  const baseUrl = process.env.GEMINI_API_BASE;
+  client ??= new GoogleGenAI({ apiKey, httpOptions: { timeout: 30_000, retryOptions: { attempts: 2, initialDelay: 1, maxDelay: 3 }, ...(baseUrl ? { baseUrl } : {}) } });
   return client;
 }
 

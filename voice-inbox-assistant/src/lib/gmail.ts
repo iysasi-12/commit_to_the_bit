@@ -3,7 +3,7 @@ import { google, type gmail_v1 } from "googleapis";
 import { convert } from "html-to-text";
 import { ApiError } from "@/lib/errors";
 import { sessionExpired } from "@/lib/server-auth";
-import { sensitiveKind, type SensitiveKind } from "@/lib/sensitive";
+import { scanWithoutSensitive, type SensitiveKind } from "@/lib/sensitive";
 
 export interface ParsedEmail {
   id: string;
@@ -108,25 +108,26 @@ export interface InboxScan {
 export async function fetchRecentEmails(accessToken: string, count: number): Promise<InboxScan> {
   const oauth = new google.auth.OAuth2();
   oauth.setCredentials({ access_token: accessToken });
-  const gmail = google.gmail({ version: "v1", auth: oauth });
+  // GMAIL_API_ROOT is for automated tests only (a fake Gmail on this computer); never set it on the server.
+  const gmail = google.gmail({ version: "v1", auth: oauth, ...(process.env.GMAIL_API_ROOT ? { rootUrl: process.env.GMAIL_API_ROOT } : {}) });
   try {
-    const list = await gmail.users.messages.list({ userId: "me", maxResults: count, labelIds: ["INBOX"] });
-    const ids = (list.data.messages ?? []).map((m) => m.id).filter((id): id is string => Boolean(id));
-    // Step 1: headers only (sender and subject), no body.
-    const headersOnly = await Promise.all(
-      ids.map((id) => gmail.users.messages.get({ userId: "me", id, format: "metadata", metadataHeaders: ["From", "Subject"] })),
+    return await scanWithoutSensitive<ParsedEmail>(
+      {
+        listIds: async (n) => {
+          const list = await gmail.users.messages.list({ userId: "me", maxResults: n, labelIds: ["INBOX"] });
+          return (list.data.messages ?? []).map((m) => m.id).filter((id): id is string => Boolean(id));
+        },
+        // Step 1: sender and subject only, no body.
+        headers: async (id) => {
+          const m = await gmail.users.messages.get({ userId: "me", id, format: "metadata", metadataHeaders: ["From", "Subject"] });
+          const headers = m.data.payload?.headers ?? undefined;
+          return { id: m.data.id ?? id, from: header(headers, "From"), subject: header(headers, "Subject") };
+        },
+        // Step 2: full content, only ever called for emails that aren't sensitive.
+        fullEmail: async (id) => parseMessage((await gmail.users.messages.get({ userId: "me", id, format: "full" })).data),
+      },
+      count,
     );
-    const sensitive: Partial<Record<SensitiveKind, number>> = {};
-    const safeIds: string[] = [];
-    for (const m of headersOnly) {
-      const headers = m.data.payload?.headers ?? undefined;
-      const kind = sensitiveKind(header(headers, "From"), header(headers, "Subject"));
-      if (kind) sensitive[kind] = (sensitive[kind] ?? 0) + 1;
-      else if (m.data.id) safeIds.push(m.data.id);
-    }
-    // Step 2: full content only for emails that aren't sensitive.
-    const messages = await Promise.all(safeIds.map((id) => gmail.users.messages.get({ userId: "me", id, format: "full" })));
-    return { emails: messages.map((m) => parseMessage(m.data)), sensitive, fetched: ids.length };
   } catch (err) {
     throw mapGmailError(err);
   }
